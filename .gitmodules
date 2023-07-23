@@ -1,0 +1,9 @@
+[submodule "TTC"]
+	path = TTC
+	url = https://github.com/G4TGJ/TTC.git
+[submodule "TRL"]
+	path = TRL
+	url = https://github.com/G4TGJ/TRL.git
+[submodule "pTRL"]
+	path = pTRL
+	url = https://github.com/G4TGJ/pTRL.git
