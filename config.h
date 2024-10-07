@@ -14,13 +14,6 @@
 #define LCD_WIDTH 16
 #define LCD_HEIGHT 2
 
-#define LCD_RS_GPIO     6
-#define LCD_ENABLE_GPIO 7 
-#define LCD_DATA_GPIO_0 8
-#define LCD_DATA_GPIO_1 9
-#define LCD_DATA_GPIO_2 10
-#define LCD_DATA_GPIO_3 11
-
 // Length of text buffers
 // Set to the be the LCD line length with a safety margin
 #define TEXT_BUF_LEN (LCD_WIDTH*2)
@@ -37,40 +30,16 @@
 #define ENABLE_DISPLAY_SPLIT_LINE
 
 // The default backlight mode
-#ifdef FIVEBAND
-#define DEFAULT_BACKLIGHT_MODE  backlightOn
-#else
 #define DEFAULT_BACKLIGHT_MODE  backlightAuto
-#endif
 
 // In auto backlight mode how long to delay before turning off the backlight
 #define BACKLIGHT_AUTO_DELAY    5000
 
 // As we are controlling the backlight it should start off
-#define BACKLIGHT_STARTS_OFF   
+#define BACKLIGHT_STARTS_OFF
 
-// ADC used for the buttons with input channel,
-// pin control register and interrupt vector
-#define BUTTON_ADC        0
-#define BUTTON_ADC_GPIO   26
-
-// ADC values for the left, right and rotary buttons.
-#define ROTARY_SW_MIN 0
-#define ROTARY_SW_MAX 100
-#define LEFT_BUTTON_MIN 500
-#define LEFT_BUTTON_MAX 1500
-#define RIGHT_BUTTON_MIN 2000
-#define RIGHT_BUTTON_MAX 3000
-
-#define MORSE_PADDLE_DASH_GPIO 14
-#define MORSE_PADDLE_DOT_GPIO  15
-
-#define ROTARY_ENCODER_A_GPIO        20
-#define ROTARY_ENCODER_B_GPIO        21
-
-#define RX_ENABLE_GPIO 22
-
-#define MORSE_OUTPUT_GPIO 25
+// How long the volume is displayed for when it changes
+#define VOLUME_DISPLAY_DELAY 1000
 
 // Time for debouncing a button (ms)
 #define DEBOUNCE_TIME   100
@@ -84,6 +53,12 @@
 // Time for the rotary pushbutton to be a long press (ms)
 #define ROTARY_LONG_PRESS_TIME 250
 
+// The number of rotary controls
+#define NUM_ROTARIES 2
+
+#define MAIN_ROTARY 0
+#define VOLUME_ROTARY 1
+
 // Oscillator chip definitions
 // I2C address
 #define SI5351A_I2C_ADDRESS 0x60
@@ -93,7 +68,7 @@
 #define SI_XTAL_LOAD_CAP SI_XTAL_LOAD_8PF
 
 // I2C clock speed
-#define I2C_CLOCK_RATE 100000
+#define I2C_CLOCK_RATE 400000
 
 // Transmit and receive clocks. Direct conversion receive uses 2 clocks (0 and 1) for quadrature.
 // Superhet uses one clock for the BFO. In this case use clocks 0 and 2 so that BFO can be set
@@ -137,8 +112,8 @@
 // The band is stored in NVRAM so this is only used on first power up
 #define DEFAULT_BAND 7
 
-// By default we are not using CW-Reverse mode
-#define DEFAULT_CWREVERSE false
+// By default we are using CW mode
+#define DEFAULT_TRX_MODE   0
 
 #define RELAY_STATE_160M   0
 #define TX_ENABLED_160M    false
@@ -183,28 +158,167 @@
 // The number of band relays
 #define NUM_RELAYS 5
 
-#define RELAY_0_OUTPUT_PIN 6
-#define RELAY_1_OUTPUT_PIN 7
-#define RELAY_2_OUTPUT_PIN 8
-#define RELAY_3_OUTPUT_PIN 9
-#define RELAY_4_OUTPUT_PIN 10
-
-#define SIDETONE_GPIO 2
-
 #define CLOCK_FREQ 125000000
 
 #define SIDETONE_DIVIDE 3
 #define SIDETONE_WRAP (CLOCK_FREQ/SIDETONE_DIVIDE/CW_FREQUENCY)
 
-#define DEFAULT_SIDETONE_PWM 50
-#define MIN_SIDETONE_PWM 2
-#define MAX_SIDETONE_PWM 99
-#define SIDETONE_PWM_INC 1
-#define VARIABLE_SIDETONE_VOLUME
+// Minimum and maximum volume levels
+#define MIN_VOLUME 0
+#define MAX_VOLUME 25
+#define DEFAULT_VOLUME 11
+#define DEFAULT_SIDETONE_VOLUME 8
+#define MIN_SIDETONE_VOLUME MIN_VOLUME
+#define MAX_SIDETONE_VOLUME MAX_VOLUME
+#define SIDETONE_VOLUME_INC 1
 
-#define EEPROM_SIZE 32
+#define VARIABLE_SIDETONE_VOLUME
 
 // Serial port definitions
 #define SERIAL_BAUD 57600
 
-#define CAT_CONTROL
+//#define CAT_CONTROL
+
+#define MAX_I_GAIN 32767
+#define MIN_I_GAIN -32768
+#define DEFAULT_I_GAIN MAX_I_GAIN
+
+#define MAX_Q_GAIN 32767
+#define MIN_Q_GAIN -32768
+#define DEFAULT_Q_GAIN MAX_Q_GAIN
+
+#define MAX_IQ_GAIN 32767
+#define MIN_IQ_GAIN -32768
+#define DEFAULT_IQ_GAIN 0
+
+
+// ADC clock is 48MHz. Divider is 2000 giving sample rate of 24kHz.
+// We are reading 3 samples so sample rate is 8kHz.
+#define ADC_SAMPLE_RATE 8000
+#define ADC_CLOCK 48000000
+#define ADC_OVERSAMPLE_RATE 8
+#define ADC_CLOCK_DIVIDER (ADC_CLOCK/ADC_SAMPLE_RATE/NUM_ADC/ADC_OVERSAMPLE_RATE - 1)
+
+// External I2C EEPROM device address
+#define EEPROM_I2C_ADDRESS 0x50
+
+// Maximum I2C reads to count when waiting for a device
+// e.g. EEPROM to finish writing
+#define MAX_I2C_WAIT_COUNT 1000
+
+// The maximum page size to write to the EEPROM over I2C
+// This is a physical restriction in the device.
+// Any multi-byte write to the device must be within the same page.
+#define EEPROM_DEVICE_PAGE_SIZE 0x80
+
+// Bit mask for the size
+#define EEPROM_DEVICE_PAGE_MASK (EEPROM_DEVICE_PAGE_SIZE - 1)
+
+// The maximum number of bytes to write to an I2C device in one go
+// No point being bigger than the size of an EEPROM page
+// but might be different if there are other devices on the bus
+#define MAX_I2C_DATA_WRITE EEPROM_DEVICE_PAGE_SIZE
+
+// The size of the actual EEPROM device
+// i.e. not the size of the simulated EEPROM
+#define EEPROM_DEVICE_SIZE 65536
+
+// Divide the device into pages. Each page contains an initial copy
+// of the EEPROM followed by update records so this page needs to be
+// much bigger than the EEPROM size.
+// The final page in the device is an index to the current page.
+// These pages are not related to the device's write pages.
+#define EEPROM_PAGE_SIZE   1024
+
+// The size of the simulated EEPROM which must be much smaller than
+// EEPROM_PAGE_SIZE and must also be smaller than EEPROM_DEVICE_PAGE_SIZE
+#define EEPROM_SIZE 32
+
+// The display we are using
+#define OLED_DISPLAY
+//#define LCD_DISPLAY
+
+#ifdef OLED_DISPLAY
+
+#define OLED_HEIGHT  64
+#define OLED_WIDTH  128
+
+#define FREQUENCY_FONT fontGrotesk16x32
+#define HALF_FREQUENCY_FONT fontArialBold
+#define SMALL_FONT fontSinclairS
+
+#define WPM_FONT SMALL_FONT
+#define VOLUME_FONT SMALL_FONT
+#define PREAMP_FONT SMALL_FONT
+
+#define FREQUENCY_DOT_FONT SMALL_FONT
+#define VFO_LETTER_FONT SMALL_FONT
+#define MENU_FONT SMALL_FONT
+#define FILTER_FONT SMALL_FONT
+#define MODE_FONT SMALL_FONT
+
+#endif
+
+// Number of buttons (in addition to those on rotary controls)
+#define NUM_PUSHBUTTONS 4
+
+#define RIGHT_BUTTON    0
+#define LEFT_BUTTON     1
+#define BUTTON_A        2
+#define BUTTON_B        3
+
+// Definitions of GPIOs in order for easy reference
+
+#define AUDIO_PWM_L_GPIO        0
+//#define ADC_DEBUG1_OUTPUT_GPIO  1
+#define PUSHBUTTON_2_GPIO       1
+#define AUDIO_PWM_R_GPIO        2
+//#define ADC_DEBUG2_OUTPUT_GPIO  3
+#define PUSHBUTTON_3_GPIO       3
+
+// I2C SDA                      4
+// I2C SCL                      5
+
+#define RELAY_0_OUTPUT_PIN      6
+#define RELAY_1_OUTPUT_PIN      7
+#define RELAY_2_OUTPUT_PIN      8
+#define RELAY_3_OUTPUT_PIN      9
+#define RELAY_4_OUTPUT_PIN     10
+
+#define ROTARY_VOLUME_A_GPIO   11
+#define ROTARY_VOLUME_B_GPIO   12
+#define ROTARY_VOLUME_SW_GPIO  13
+
+#define MORSE_PADDLE_DASH_GPIO 14
+#define MORSE_PADDLE_DOT_GPIO  15
+
+#define MORSE_OUTPUT_GPIO      16
+
+#define PUSHBUTTON_0_GPIO      17
+#define PUSHBUTTON_1_GPIO      18
+
+#define ROTARY_MAIN_SW_GPIO    19
+#define ROTARY_MAIN_A_GPIO     20
+#define ROTARY_MAIN_B_GPIO     21
+
+#define RX_ENABLE_GPIO         22
+
+// Pico SMPS mode              23
+// Pico VBUS monitor           24
+// Pico LED                    25
+
+#define AUDIO_I_GPIO           26
+#define AUDIO_Q_GPIO           27
+
+#define PREAMP_ENABLE_GPIO     28
+
+#define NUM_ADC 2
+
+#define AUDIO_I_ADC    0
+#define AUDIO_Q_ADC    1
+
+#define AUDIO_DIVIDE 1
+
+#define AUDIO_WRAP 4094
+
+#define DEFAULT_FILTER 0
