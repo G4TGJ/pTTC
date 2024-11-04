@@ -71,7 +71,14 @@ static int volumeMultiplier[MAX_VOLUME + 1] =
     455,
     573,
     722,
-    908
+    908,
+    1144,
+    1440,
+    1812,
+    2282,
+    2872,
+    3616,
+    4552,
 };
 
 // Approx 700Hz sine wave
@@ -324,6 +331,7 @@ static int rightCurrentSample;
 enum sdrSource outputSource;
 static int currentFilter = DEFAULT_FILTER;
 bool applyRoofingFilter = true;
+bool shiftFrequency = true;
 
 int16_t iGain = DEFAULT_I_GAIN;
 int16_t qGain = DEFAULT_Q_GAIN;
@@ -594,8 +602,16 @@ void processAudio()
 
     if( applyRoofingFilter )
     {
-        inI = firOut(&ICurrentSample, IBuffer, roofingFilterTaps, ROOFING_FILTER_TAP_NUM, ROOFING_FILTER_PRECISION);
-        inQ = firOut(&QCurrentSample, QBuffer, roofingFilterTaps, ROOFING_FILTER_TAP_NUM, ROOFING_FILTER_PRECISION);
+        if( shiftFrequency )
+        {
+            inI = firOut(&ICurrentSample, IBuffer, roofingFilterTaps2, ROOFING_FILTER_TAP_NUM_2, ROOFING_FILTER_PRECISION_2);
+            inQ = firOut(&QCurrentSample, QBuffer, roofingFilterTaps2, ROOFING_FILTER_TAP_NUM_2, ROOFING_FILTER_PRECISION_2);
+        }
+        else
+        {
+            inI = firOut(&ICurrentSample, IBuffer, roofingFilterTaps, ROOFING_FILTER_TAP_NUM, ROOFING_FILTER_PRECISION);
+            inQ = firOut(&QCurrentSample, QBuffer, roofingFilterTaps, ROOFING_FILTER_TAP_NUM, ROOFING_FILTER_PRECISION);
+        }
     }
     else
     {
@@ -640,6 +656,40 @@ void processAudio()
     if( adjustPhase )
     {
         inI += (inQ * iqGain/32768);
+    }
+
+    if( shiftFrequency )
+    {
+        int16_t origI;
+        static int shiftPos;
+        switch( shiftPos )
+        {
+            case 0:
+            default:
+                // I=I Q=Q
+                shiftPos = 1;
+                break;
+
+            case 1:
+                origI = inI;
+                inI = -inQ;
+                inQ = origI;
+                shiftPos = 2;
+                break;
+
+            case 2:
+                inI = -inI;
+                inQ = -inQ;
+                shiftPos = 3;
+                break;        
+
+            case 3:
+                origI = inI;
+                inI = inQ;
+                inQ = -origI;
+                shiftPos = 0;
+                break;
+        }
     }
 
     switch( outputSource )
@@ -687,7 +737,7 @@ void processAudio()
     }
 
     // Apply the CW filter
-    if( currentFilter > 0 && currentFilter < NUM_FILTERS )
+    if( currentFilter >= 0 && currentFilter < NUM_FILTERS && filters[currentFilter].taps != NULL)
     {
         out = fir(out, &OutCurrentSample, OutBuffer, filters[currentFilter].taps, filters[currentFilter].numTaps, filters[currentFilter].precision);;
     }
@@ -769,7 +819,7 @@ void processAudio()
         vol = volumeMultiplier[actualVolume];
     }
 
-    if( currentFilter == BINAURAL_FILTER )
+    if( currentFilter >= 0 && currentFilter < NUM_FILTERS && filters[currentFilter].binaural )
     {
         // Apply LPF to left and HPF to right to get binaural effect
         outLeft  = fir(out, &leftCurrentSample,  leftBuffer,  leftFilterTaps,  LEFT_FILTER_TAP_NUM,  LEFT_FILTER_PRECISION);
@@ -849,7 +899,6 @@ void adc_interrupt_handler()
         }
 
         processAudioNow = true;
-        //processAudio();
     }
     clearAdcDebug1();
 }
@@ -1145,7 +1194,7 @@ void ioInit()
 #if 1
     // Force 3V3 regulator into PWM mode to reduce noise
     gpioSetOutput(23);
-    gpio_put(23, 0);
+    gpio_put(23, 1);
 #endif
     gpioSetOutput(MORSE_OUTPUT_GPIO);
     gpioSetOutput(RX_ENABLE_GPIO);

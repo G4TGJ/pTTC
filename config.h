@@ -165,7 +165,7 @@
 
 // Minimum and maximum volume levels
 #define MIN_VOLUME 0
-#define MAX_VOLUME 25
+#define MAX_VOLUME 32
 #define DEFAULT_VOLUME 11
 #define DEFAULT_SIDETONE_VOLUME 8
 #define MIN_SIDETONE_VOLUME MIN_VOLUME
@@ -190,14 +190,6 @@
 #define MAX_IQ_GAIN 32767
 #define MIN_IQ_GAIN -32768
 #define DEFAULT_IQ_GAIN 0
-
-
-// ADC clock is 48MHz. Divider is 2000 giving sample rate of 24kHz.
-// We are reading 3 samples so sample rate is 8kHz.
-#define ADC_SAMPLE_RATE 8000
-#define ADC_CLOCK 48000000
-#define ADC_OVERSAMPLE_RATE 8
-#define ADC_CLOCK_DIVIDER (ADC_CLOCK/ADC_SAMPLE_RATE/NUM_ADC/ADC_OVERSAMPLE_RATE - 1)
 
 // External I2C EEPROM device address
 #define EEPROM_I2C_ADDRESS 0x50
@@ -270,10 +262,8 @@
 // Definitions of GPIOs in order for easy reference
 
 #define AUDIO_PWM_L_GPIO        0
-//#define ADC_DEBUG1_OUTPUT_GPIO  1
 #define PUSHBUTTON_2_GPIO       1
 #define AUDIO_PWM_R_GPIO        2
-//#define ADC_DEBUG2_OUTPUT_GPIO  3
 #define PUSHBUTTON_3_GPIO       3
 
 // I2C SDA                      4
@@ -312,7 +302,22 @@
 
 #define PREAMP_ENABLE_GPIO     28
 
+// Defining these will enable debug outputs for
+// checking not spending too long processing
+// audio
+// They are otherwise used for buttons so they will
+// not be available if debug pins enabled
+//#define ADC_DEBUG1_OUTPUT_GPIO  1
+//#define ADC_DEBUG2_OUTPUT_GPIO  3
+
 #define NUM_ADC 2
+
+// ADC clock is 48MHz. Divider is 2000 giving sample rate of 24kHz.
+// We are reading 3 samples so sample rate is 8kHz.
+#define ADC_SAMPLE_RATE 8000
+#define ADC_CLOCK 48000000
+#define ADC_OVERSAMPLE_RATE 8
+#define ADC_CLOCK_DIVIDER (ADC_CLOCK/ADC_SAMPLE_RATE/NUM_ADC/ADC_OVERSAMPLE_RATE - 1)
 
 #define AUDIO_I_ADC    0
 #define AUDIO_Q_ADC    1
@@ -321,4 +326,4 @@
 
 #define AUDIO_WRAP 4094
 
-#define DEFAULT_FILTER 0
+#define DEFAULT_FILTER 1
