@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include "hardware/adc.h"
+#include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 #include "hardware/irq.h"
@@ -266,7 +267,7 @@ static const int16_t sine700[NUM_SINE700] =
 
 static int currentSinePos;
 
-static int16_t sinewave()
+static inline int16_t sinewave()
 {
     int16_t val = sine700[currentSinePos];
     currentSinePos = (currentSinePos+1) % NUM_SINE700;
@@ -340,8 +341,6 @@ int16_t iqGain = DEFAULT_IQ_GAIN;
 bool applyGains;
 bool adjustPhase;
 
-static volatile bool processAudioNow;
-
 volatile uint32_t maxInput;
 
 static uint8_t pwmDivider = AUDIO_DIVIDE;
@@ -393,7 +392,7 @@ uint32_t ioGetScale( void )
 #endif
 }
 
-static int16_t delay( int16_t sample, int *current, int16_t *buffer, int delay )
+static inline int16_t delay( int16_t sample, int *current, int16_t *buffer, int delay )
 {
     int i;
     int16_t result = 0;
@@ -505,7 +504,7 @@ static int16_t fir( int16_t sample, int *current, int16_t *buffer, const int *ta
 
 static bool adcDebugState1;
 
-void toggleAdcDebug1()
+static inline void toggleAdcDebug1()
 {
 #ifdef ADC_DEBUG1_OUTPUT_GPIO
     adcDebugState1 = !adcDebugState1;
@@ -513,7 +512,7 @@ void toggleAdcDebug1()
 #endif
 }
 
-void setAdcDebug1()
+static inline void setAdcDebug1()
 {
 #ifdef ADC_DEBUG1_OUTPUT_GPIO
     adcDebugState1 = true;
@@ -521,7 +520,7 @@ void setAdcDebug1()
 #endif
 }
 
-void clearAdcDebug1()
+static inline void clearAdcDebug1()
 {
 #ifdef ADC_DEBUG1_OUTPUT_GPIO
     adcDebugState1 = false;
@@ -531,7 +530,7 @@ void clearAdcDebug1()
 
 static bool adcDebugState2;
 
-void toggleAdcDebug2()
+static inline void toggleAdcDebug2()
 {
 #ifdef ADC_DEBUG2_OUTPUT_GPIO
     adcDebugState2 = !adcDebugState2;
@@ -539,7 +538,7 @@ void toggleAdcDebug2()
 #endif
 }
 
-void setAdcDebug2()
+static inline void setAdcDebug2()
 {
 #ifdef ADC_DEBUG2_OUTPUT_GPIO
     adcDebugState2 = true;
@@ -547,7 +546,7 @@ void setAdcDebug2()
 #endif
 }
 
-void clearAdcDebug2()
+static inline void clearAdcDebug2()
 {
 #ifdef ADC_DEBUG2_OUTPUT_GPIO
     adcDebugState2 = false;
@@ -560,7 +559,7 @@ static int16_t outPWMLeft;
 static int16_t outPWMRight;
 
 // Calculate the output PWM value and apply the volume
-static int16_t calcPWM( int16_t out, int16_t vol )
+static inline int16_t calcPWM( int16_t out, int16_t vol )
 {
     // Apply the volume and convert to unsigned
     int16_t outPWM = (((int32_t)out*vol)/VOLUME_PRECISION + ADC_OFFSET)/PWM_DIVIDER;
@@ -581,7 +580,7 @@ static int16_t calcPWM( int16_t out, int16_t vol )
 // Process the input I and Q samples and generate the output sample
 // The input and the output are done in the interrupt handler
 // but the processing is done in the main loop
-void processAudio()
+static inline void processAudio()
 {
     int16_t out, outI, outQ, inI, inQ, outLeft, outRight;
     static int aveI, aveQ;
@@ -848,58 +847,58 @@ void processAudio()
     clearAdcDebug2();
 }
 
-void adc_interrupt_handler()
+#define ADC_BUFFER_SIZE 16
+
+static int captureDma;
+static dma_channel_config captureCfg;
+
+static int adcDma0;
+static int adcDma1;
+static dma_channel_config dmaCfg0;
+static dma_channel_config dmaCfg1;
+static uint16_t adcBuffer0[ADC_BUFFER_SIZE];
+static uint16_t adcBuffer1[ADC_BUFFER_SIZE];
+
+// Feed from a DMA buffer into the FIR
+static inline void feedFir( uint16_t *buf )
 {
     int i;
-    static int interruptCount;
-    static uint16_t adcSampleI[ADC_OVERSAMPLE_RATE];
-    static uint16_t adcSampleQ[ADC_OVERSAMPLE_RATE];
-
-    setAdcDebug1();
-    currentCount = adc_fifo_get_level();
-
-    // Must convert from unsigned sample to a signed sample
-    adcSampleI[interruptCount] = ((int)adc_fifo_get() - ADC_OFFSET);
-    adcSampleQ[interruptCount] = ((int)adc_fifo_get() - ADC_OFFSET);
-
-#if 0
-    // Must convert from unsigned sample to a signed sample
-    firIn(((int)adc_fifo_get() - ADC_OFFSET), &ICurrentSample, IBuffer, ROOFING_FILTER_TAP_NUM);
-    firIn(((int)adc_fifo_get() - ADC_OFFSET), &QCurrentSample, QBuffer, ROOFING_FILTER_TAP_NUM);
-#endif
-
-    //adc_fifo_drain();
-    //adc_select_input(BUTTON_ADC);
-    //adc_run(true);
-
-    // We are oversampling because we only have one ADC and we want to sample
-    // I and Q as close together as possible.
-    if( ++interruptCount >= ADC_OVERSAMPLE_RATE )
+    for( i = 0 ; i < ADC_BUFFER_SIZE/2 ; i++ )
     {
-        interruptCount = 0;
-
-        // Write the output value determined last time. This adds a slight delay but
-        // ensures that the output changes at a consistent time not dependent on the time
-        // taken to do all the calculations for the filters.
-        pwm_set_chan_level(audio_l_slice_num, PWM_CHAN_A, outPWMLeft);
-        pwm_set_chan_level(audio_r_slice_num, PWM_CHAN_A, outPWMRight);
-        
-#if 0
-        for( i = 0 ; i < NUM_ADC ; i++ )
-        {
-            adcSample[i] = adcTotal[i] / ADC_OVERSAMPLE_RATE;
-            adcTotal[i] = 0;
-        }
-#endif
-
-        for( i = 0 ; i < ADC_OVERSAMPLE_RATE ; i++ )
-        {
-            firIn(adcSampleI[i], &ICurrentSample, IBuffer, ROOFING_FILTER_TAP_NUM);
-            firIn(adcSampleQ[i], &QCurrentSample, QBuffer, ROOFING_FILTER_TAP_NUM);
-        }
-
-        processAudioNow = true;
+        // Samples alternate between I and Q in DMA buffer and must be converted to signed
+        firIn(((int)buf[i*2]   - ADC_OFFSET), &ICurrentSample, IBuffer, ROOFING_FILTER_TAP_NUM);
+        firIn(((int)buf[i*2]+1 - ADC_OFFSET), &QCurrentSample, QBuffer, ROOFING_FILTER_TAP_NUM);
     }
+}
+
+static void adc_interrupt_handler()
+{
+    setAdcDebug1();
+
+    // If DMA into buffer 0 completed then feed into the FIR
+    if(dma_hw->ints0 & (1u << adcDma0))
+    {
+        dma_channel_configure(adcDma0, &dmaCfg0, adcBuffer0, &adc_hw->fifo, ADC_BUFFER_SIZE, false);
+        feedFir( adcBuffer0 );
+        dma_hw->ints0 = 1u << adcDma0;
+    }
+
+    // If DMA into buffer 1 completed then feed into the FIR
+    if(dma_hw->ints0 & (1u << adcDma1))
+    {
+        dma_channel_configure(adcDma1, &dmaCfg1, adcBuffer1, &adc_hw->fifo, ADC_BUFFER_SIZE, false);
+        feedFir( adcBuffer1 );
+        dma_hw->ints0 = 1u << adcDma1;
+    }
+
+    // Write the output value determined last time. This adds a slight delay but
+    // ensures that the output changes at a consistent time not dependent on the time
+    // taken to do all the calculations for the filters.
+    pwm_set_chan_level(audio_l_slice_num, PWM_CHAN_A, outPWMLeft);
+    pwm_set_chan_level(audio_r_slice_num, PWM_CHAN_A, outPWMRight);
+    
+    processAudio();
+
     clearAdcDebug1();
 }
 
@@ -912,54 +911,51 @@ void core1_main()
     gpioSetOutput(ADC_DEBUG2_OUTPUT_GPIO);
 #endif
 
-    // We need the ADC for audio input and possibly buttons
+    // We need the ADC for audio input
     adc_init();
 
-    // Set up the ADC for the pushbuttons and the audio input
-#ifdef ANALOGUE_BUTTONS
-    adc_gpio_init(BUTTON_ADC_GPIO);
-    gpio_pull_up(BUTTON_ADC_GPIO);
-#endif
+    // Set up the ADC for the audio input
     adc_gpio_init(AUDIO_I_GPIO);
     adc_gpio_init(AUDIO_Q_GPIO);
     adc_set_clkdiv(ADC_CLOCK_DIVIDER);
-    adc_fifo_setup(true, false, NUM_ADC, false, false);
-    adc_fifo_drain();
 
-#ifdef ANALOGUE_BUTTONS
-    adc_set_round_robin( (1<<BUTTON_ADC) | (1<<AUDIO_I_ADC) | (1<<AUDIO_Q_ADC) );
-    adc_select_input(BUTTON_ADC);
-#else
+    // Configure DMA for ADC transfers
+    adcDma0 = dma_claim_unused_channel(true);
+    adcDma1 = dma_claim_unused_channel(true);
+    dmaCfg0 = dma_channel_get_default_config(adcDma0);
+    dmaCfg1 = dma_channel_get_default_config(adcDma1);
+
+    channel_config_set_transfer_data_size(&dmaCfg0, DMA_SIZE_16);
+    channel_config_set_read_increment(&dmaCfg0, false);
+    channel_config_set_write_increment(&dmaCfg0, true);
+    channel_config_set_dreq(&dmaCfg0, DREQ_ADC);
+    channel_config_set_chain_to(&dmaCfg0, adcDma1);
+
+    channel_config_set_transfer_data_size(&dmaCfg1, DMA_SIZE_16);
+    channel_config_set_read_increment(&dmaCfg1, false);
+    channel_config_set_write_increment(&dmaCfg1, true);
+    channel_config_set_dreq(&dmaCfg1, DREQ_ADC);
+    channel_config_set_chain_to(&dmaCfg1, adcDma0);
+
+    dma_set_irq0_channel_mask_enabled((1u<<adcDma0) | (1u<<adcDma1), true);
+    irq_set_exclusive_handler(DMA_IRQ_0, adc_interrupt_handler);
+    irq_set_enabled(DMA_IRQ_0, true);
+
+    hw_clear_bits(&adc_hw->fcs, ADC_FCS_UNDER_BITS);
+    hw_clear_bits(&adc_hw->fcs, ADC_FCS_OVER_BITS);
+    adc_fifo_setup(true, true, 1, false, false);
+    adc_select_input(0);
     adc_set_round_robin( (1<<AUDIO_I_ADC) | (1<<AUDIO_Q_ADC) );
-    adc_select_input(AUDIO_I_ADC);
-#endif
 
-    irq_set_exclusive_handler(ADC_IRQ_FIFO, adc_interrupt_handler);
-    adc_irq_set_enabled(true);
-    irq_set_enabled(ADC_IRQ_FIFO, true);
+    dma_channel_configure(adcDma0, &dmaCfg0, adcBuffer0, &adc_hw->fifo, ADC_BUFFER_SIZE, false);
+    dma_channel_configure(adcDma1, &dmaCfg1, adcBuffer1, &adc_hw->fifo, ADC_BUFFER_SIZE, false);
+    dma_channel_set_irq0_enabled(adcDma0, true);
+    dma_channel_set_irq0_enabled(adcDma1, true);
+    dma_start_channel_mask(1u << adcDma0);
     adc_run(true);
-
+    
     while (1)
     {
-        if( processAudioNow )
-        {
-            processAudioNow = false;
-            processAudio();
-        }
-        else
-        {
-#if 0            
-            static uint32_t previous;
-            uint32_t now = time_us_32();
-            if( (now - previous) >= 1000000 )
-            {
-                currentCount = idleCount;
-                idleCount = 0;
-                previous = now;
-            }
-            idleCount++;
-#endif
-        }
     }
 }
 
@@ -1191,11 +1187,12 @@ void ioWriteBandRelay( uint8_t relay, bool bOn )
 // Configure all the I/O we need
 void ioInit()
 {
-#if 1
     // Force 3V3 regulator into PWM mode to reduce noise
+    // We can also disable the regulator by tying 3V3_EN to ground
+    // and supplying our own clean 3V3 to 3V3(OUT)
     gpioSetOutput(23);
     gpio_put(23, 1);
-#endif
+
     gpioSetOutput(MORSE_OUTPUT_GPIO);
     gpioSetOutput(RX_ENABLE_GPIO);
 

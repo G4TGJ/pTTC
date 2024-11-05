@@ -23,6 +23,9 @@ add_subdirectory(pTRL)
 target_link_libraries(pTTC
     pico_stdlib
     pico_multicore
+    hardware_dma
+    hardware_adc
+    hardware_pwm
     TTC
     TRL
     pTRL
