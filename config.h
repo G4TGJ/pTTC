@@ -312,12 +312,12 @@
 
 #define NUM_ADC 2
 
-// ADC clock is 48MHz. Divider is 2000 giving sample rate of 24kHz.
-// We are reading 3 samples so sample rate is 8kHz.
-#define ADC_SAMPLE_RATE 8000
+// ADC clock is 48MHz. 
+// Ultimate sample rate is 8K but we are overclocking and
+// then decimating.
+#define ADC_SAMPLE_RATE 128000
 #define ADC_CLOCK 48000000
-#define ADC_OVERSAMPLE_RATE 8
-#define ADC_CLOCK_DIVIDER (ADC_CLOCK/ADC_SAMPLE_RATE/NUM_ADC/ADC_OVERSAMPLE_RATE - 1)
+#define ADC_CLOCK_DIVIDER (ADC_CLOCK/ADC_SAMPLE_RATE/NUM_ADC - 1)
 
 #define AUDIO_I_ADC    0
 #define AUDIO_Q_ADC    1
@@ -327,3 +327,13 @@
 #define AUDIO_WRAP 4094
 
 #define DEFAULT_FILTER 1
+
+// Possible intermediate frequencies
+enum eIF
+{
+  IF_0KHZ,
+  IF_2KHZ,
+  IF_8KHZ,
+  NUM_IF
+};
+

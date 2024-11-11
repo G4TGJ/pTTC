@@ -265,6 +265,18 @@ static const int16_t sine700[NUM_SINE700] =
 #endif
 };
 
+#define ADC_BUFFER_SIZE 32
+
+static int captureDma;
+static dma_channel_config captureCfg;
+
+static int adcDma0;
+static int adcDma1;
+static dma_channel_config dmaCfg0;
+static dma_channel_config dmaCfg1;
+static uint16_t adcBuffer0[ADC_BUFFER_SIZE];
+static uint16_t adcBuffer1[ADC_BUFFER_SIZE];
+
 static int currentSinePos;
 
 static inline int16_t sinewave()
@@ -310,10 +322,10 @@ static uint sidetone_slice_num;
 static uint audio_l_slice_num;
 static uint audio_r_slice_num;
 
-static volatile uint16_t adcSample[NUM_ADC];
+//static volatile uint16_t adcSample[NUM_ADC];
 
-static int16_t IBuffer[ROOFING_FILTER_TAP_NUM];
-static int16_t QBuffer[ROOFING_FILTER_TAP_NUM];
+//static int16_t IBuffer[ROOFING_FILTER_TAP_NUM];
+//static int16_t QBuffer[ROOFING_FILTER_TAP_NUM];
 static int16_t OutBuffer[FILTER_TAP_NUM];
 static int16_t hilbertBuffer[HILBERT_FILTER_TAP_NUM];
 static int16_t delayBuffer[HILBERT_FILTER_TAP_NUM];
@@ -328,11 +340,34 @@ static int delayCurrentSample;
 static int leftCurrentSample;
 static int rightCurrentSample;
 
+// Input and output positions for 128/64k filter
+// Input and output are tracked separately as the
+// input is filled at the start of the interrupt handler
+static int iIn12864, qIn12864;
+static int iOut12864, qOut12864;
+
+// Positions for the other filters
+// Input and output track each other
+static int iPos6432, qPos6432;
+static int iPos3216, qPos3216;
+static int iPos168,  qPos168;
+
+static int16_t iDecimate12864Buffer[DECIMATE_BUFFER_LEN];
+static int16_t qDecimate12864Buffer[DECIMATE_BUFFER_LEN];
+static int16_t  iDecimate6432Buffer[DECIMATE_BUFFER_LEN];
+static int16_t  qDecimate6432Buffer[DECIMATE_BUFFER_LEN];
+static int16_t  iDecimate3216Buffer[DECIMATE_BUFFER_LEN];
+static int16_t  qDecimate3216Buffer[DECIMATE_BUFFER_LEN];
+static int16_t   iDecimate168Buffer[DECIMATE_BUFFER_LEN];
+static int16_t   qDecimate168Buffer[DECIMATE_BUFFER_LEN];
+
 // The following can be configured in menus so are global
 enum sdrSource outputSource;
 static int currentFilter = DEFAULT_FILTER;
 bool applyRoofingFilter = true;
-bool shiftFrequency = true;
+
+// The selected intermediate frequency
+enum eIF intermediateFrequency = IF_8KHZ;
 
 int16_t iGain = DEFAULT_I_GAIN;
 int16_t qGain = DEFAULT_Q_GAIN;
@@ -392,6 +427,17 @@ uint32_t ioGetScale( void )
 #endif
 }
 
+static inline int next( int current, int num )
+{
+    // Get the next sample position, wrapping as needed
+    current++;
+    if( current >= num )
+    {
+        current = 0;
+    }
+    return current;
+}
+
 static inline int16_t delay( int16_t sample, int *current, int16_t *buffer, int delay )
 {
     int i;
@@ -404,42 +450,38 @@ static inline int16_t delay( int16_t sample, int *current, int16_t *buffer, int 
     buffer[*current] = sample;
 
     // Move to the next sample position, wrapping as needed
-    *current = (*current+1) % delay;
+    *current = next( *current, delay );
 
     return result;
 }
 
-static inline void firIn( int16_t sample, int *current, int16_t *buffer, int numTaps )
+static inline void firIn( int16_t sample, int *current, int16_t *buffer, int bufLen )
 {
     // Store the new sample
     buffer[*current] = sample;
 
     // Move to the next sample position, wrapping as needed
-    (*current)++;
-    if( *current >= numTaps )
-    {
-        *current = 0;
-    }
+    *current = next( *current, bufLen );
 }
 
-static inline int16_t firOut( int *current, int16_t *buffer, const int *taps, int numTaps, int precision )
+static inline int16_t firOut( int current, int16_t *buffer, const int *taps, int numTaps, int bufLen, int precision )
 {
 
 #if 1
-    int i;
+    int tap;
     int index;
     int32_t result = 0;
 
     // Calculate the result from the FIR filter
-    index = *current;
-    for( int i = 0 ; i < numTaps ; i++ )
+    index = current;
+    for( tap = 0 ; tap < numTaps ; tap++ )
     {
         index--;
         if( index < 0 )
         {
-            index = numTaps-1;
+            index = bufLen-1;
         }
-        result += ((int32_t) buffer[index]) * taps[i];
+        result += ((int32_t) buffer[index]) * taps[tap];
     }
 #else
     uint8_t i;
@@ -463,8 +505,8 @@ static inline int16_t firOut( int *current, int16_t *buffer, const int *taps, in
 
  static int16_t inline fir( int16_t sample, int *current, int16_t *buffer, const int *taps, int numTaps, int precision )
 {
-    firIn( sample, current, buffer,       numTaps );
-    return firOut( current, buffer, taps, numTaps, precision );
+    firIn( sample,  current, buffer,       numTaps );
+    return firOut( *current, buffer, taps, numTaps, numTaps, precision );
 }
 
 #if 0
@@ -577,39 +619,181 @@ static inline int16_t calcPWM( int16_t out, int16_t vol )
     return outPWM;
 }
 
+// Shift the frequency up by 1/4 of the sample rate
+static inline void shiftFrequency( int16_t *pI, int16_t *pQ )
+{
+    int16_t origI;
+    static int shiftPos;
+    switch( shiftPos )
+    {
+        case 0:
+        default:
+            // I=I Q=Q
+            shiftPos = 1;
+            break;
+
+        case 1:
+            origI = *pI;
+            *pI = -*pQ;
+            *pQ = origI;
+            shiftPos = 2;
+            break;
+
+        case 2:
+            *pI = -*pI;
+            *pQ = -*pQ;
+            shiftPos = 3;
+            break;        
+
+        case 3:
+            origI = *pI;
+            *pI = *pQ;
+            *pQ = -origI;
+            shiftPos = 0;
+            break;
+    }
+}
+
+#if 0
+static inline void shiftFrequencyDown( int16_t *pI, int16_t *pQ )
+{
+    int16_t origI;
+    static int shiftPos;
+    switch( shiftPos )
+    {
+        case 0:
+        default:
+            // I=I Q=Q
+            shiftPos = 1;
+            break;
+
+        case 1:
+            origI = *pI;
+            *pI = *pQ;
+            *pQ = -origI;
+            shiftPos = 2;
+            break;
+
+        case 2:
+            *pI = -*pI;
+            *pQ = -*pQ;
+            shiftPos = 3;
+            break;        
+
+        case 3:
+            origI = *pI;
+            *pI = -*pQ;
+            *pQ = origI;
+            shiftPos = 0;
+            break;
+    }
+}
+#endif
+
 // Process the input I and Q samples and generate the output sample
 // The input and the output are done in the interrupt handler
 // but the processing is done in the main loop
 static inline void processAudio()
 {
-    int16_t out, outI, outQ, inI, inQ, outLeft, outRight;
+    int16_t out, outI, outQ, inI, inQ, outLeft, outRight, i32, q32;
     static int aveI, aveQ;
 
     // The volume, either normal or sidetone, to apply to the output
     int vol;
 
-    setAdcDebug2();
+#if 1
+    if( applyRoofingFilter )
+    {
+        // At the beginning of the interrupt handler the I and Q samples were copied into
+        // the FIR filter buffer.
+        // We are decimating by 2 so the outputs are every other pair of samples
+        // 32 samples of I and Q decimated by 2
+        for( int i = 1 ; i <= ADC_BUFFER_SIZE/4 ; i++ )
+        {
+            // 64Ksps
+            // 1, 2, 3, 4, 5, 6, 7, 8
+            // We are decimating by 2 so move past the next 2 I and Q in the output
+            iOut12864 = next( iOut12864, DECIMATE_BUFFER_LEN );
+            iOut12864 = next( iOut12864, DECIMATE_BUFFER_LEN );
+            qOut12864 = next( qOut12864, DECIMATE_BUFFER_LEN );
+            qOut12864 = next( qOut12864, DECIMATE_BUFFER_LEN );
 
-#if 0
-    // Must convert from unsigned sample to a signed sample
-    int16_t inI = ((int)adcSample[AUDIO_I_ADC] - ADC_OFFSET)/1;
-    int16_t inQ = ((int)adcSample[AUDIO_Q_ADC] - ADC_OFFSET)/1;
-#endif
+            // Take the output of the 128/64 filter and feed into the 64/32 filter
+            firIn( firOut( iOut12864, iDecimate12864Buffer, decimate12864FilterTaps, DECIMATE_128_64_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_128_64_FILTER_PRECISION ),
+                    &iPos6432, iDecimate6432Buffer, DECIMATE_BUFFER_LEN );
+            firIn( firOut( qOut12864, qDecimate12864Buffer, decimate12864FilterTaps, DECIMATE_128_64_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_128_64_FILTER_PRECISION ),
+                    &qPos6432, qDecimate6432Buffer, DECIMATE_BUFFER_LEN );
 
+            // 2, 4, 6, 8
+            if( (i%2) == 0 )
+            {
+                toggleAdcDebug2();
+
+                // 32Ksps
+                switch ( intermediateFrequency )
+                {
+                    default:
+                    case IF_0KHZ:
+                        i32 = firOut( iPos6432, iDecimate6432Buffer, decimate64320FilterTaps, DECIMATE_64_32_0_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_64_32_0_FILTER_PRECISION );
+                        q32 = firOut( qPos6432, qDecimate6432Buffer, decimate64320FilterTaps, DECIMATE_64_32_0_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_64_32_0_FILTER_PRECISION );
+                        break;
+
+                    case IF_2KHZ:
+                        i32 = firOut( iPos6432, iDecimate6432Buffer, decimate64322FilterTaps, DECIMATE_64_32_2_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_64_32_2_FILTER_PRECISION );
+                        q32 = firOut( qPos6432, qDecimate6432Buffer, decimate64322FilterTaps, DECIMATE_64_32_2_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_64_32_2_FILTER_PRECISION );
+                        break;
+
+                    case IF_8KHZ:
+    #if 0
+                        i32 = firOut( iPos6432, iDecimate6432Buffer, decimate64322FilterTaps, DECIMATE_64_32_2_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_64_32_2_FILTER_PRECISION );
+                        q32 = firOut( qPos6432, qDecimate6432Buffer, decimate64322FilterTaps, DECIMATE_64_32_2_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_64_32_2_FILTER_PRECISION );
+    #else
+                        i32 = firOut( iPos6432, iDecimate6432Buffer, decimate64328FilterTaps, DECIMATE_64_32_8_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_64_32_8_FILTER_PRECISION );
+                        q32 = firOut( qPos6432, qDecimate6432Buffer, decimate64328FilterTaps, DECIMATE_64_32_8_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_64_32_8_FILTER_PRECISION );
+    #endif
+                        shiftFrequency( &i32, &q32 );
+                        break;
+                }
+
+                firIn( i32, &iPos3216, iDecimate3216Buffer, DECIMATE_BUFFER_LEN );
+                firIn( q32, &qPos3216, qDecimate3216Buffer, DECIMATE_BUFFER_LEN );
+            }
+
+            // 4, 8
+            if( (i%4) == 0 )
+            {
+                // 16Ksps
+                firIn( firOut( iPos3216, iDecimate3216Buffer, decimate3216FilterTaps, DECIMATE_32_16_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_32_16_FILTER_PRECISION ), 
+                    &iPos168, iDecimate168Buffer, DECIMATE_BUFFER_LEN );
+                firIn( firOut( qPos3216, qDecimate3216Buffer, decimate3216FilterTaps, DECIMATE_32_16_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_32_16_FILTER_PRECISION ), 
+                    &qPos168, qDecimate168Buffer, DECIMATE_BUFFER_LEN );
+            }
+        }
+        // 8Ksps
+        inI = firOut( iPos168, iDecimate168Buffer, decimate168FilterTaps, DECIMATE_16_8_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_16_8_FILTER_PRECISION );
+        inQ = firOut( qPos168, qDecimate168Buffer, decimate168FilterTaps, DECIMATE_16_8_FILTER_TAP_NUM, DECIMATE_BUFFER_LEN, DECIMATE_16_8_FILTER_PRECISION );
+    }
+    else
+    {
+        inI = iDecimate12864Buffer[iIn12864];
+        inQ = qDecimate12864Buffer[qIn12864];
+    }
+    //clearAdcDebug2();
+#else
     int iSample = ICurrentSample;
     int qSample = QCurrentSample;
 
     if( applyRoofingFilter )
     {
-        if( shiftFrequency )
+        if( intermediateFrequency )
         {
-            inI = firOut(&ICurrentSample, IBuffer, roofingFilterTaps2, ROOFING_FILTER_TAP_NUM_2, ROOFING_FILTER_PRECISION_2);
-            inQ = firOut(&QCurrentSample, QBuffer, roofingFilterTaps2, ROOFING_FILTER_TAP_NUM_2, ROOFING_FILTER_PRECISION_2);
+            inI = firOut(ICurrentSample, IBuffer, roofingFilterTaps2, ROOFING_FILTER_TAP_NUM_2, ROOFING_FILTER_PRECISION_2);
+            inQ = firOut(QCurrentSample, QBuffer, roofingFilterTaps2, ROOFING_FILTER_TAP_NUM_2, ROOFING_FILTER_PRECISION_2);
         }
         else
         {
-            inI = firOut(&ICurrentSample, IBuffer, roofingFilterTaps, ROOFING_FILTER_TAP_NUM, ROOFING_FILTER_PRECISION);
-            inQ = firOut(&QCurrentSample, QBuffer, roofingFilterTaps, ROOFING_FILTER_TAP_NUM, ROOFING_FILTER_PRECISION);
+            inI = firOut(ICurrentSample, IBuffer, roofingFilterTaps, ROOFING_FILTER_TAP_NUM, ROOFING_FILTER_PRECISION);
+            inQ = firOut(QCurrentSample, QBuffer, roofingFilterTaps, ROOFING_FILTER_TAP_NUM, ROOFING_FILTER_PRECISION);
         }
     }
     else
@@ -617,7 +801,7 @@ static inline void processAudio()
         inI = IBuffer[iSample];
         inQ = QBuffer[qSample];
     }
-
+#endif
 #if 0
     // Remove the DC offset from the input signals by subracting the moving average
     aveI = (aveI*7999+inI)/8000;
@@ -657,38 +841,11 @@ static inline void processAudio()
         inI += (inQ * iqGain/32768);
     }
 
-    if( shiftFrequency )
+    // If it's a 2kHz IF we shift the frequency here
+    // because it's 1/4 of the 8kHz sample rate
+    if( intermediateFrequency == IF_2KHZ )
     {
-        int16_t origI;
-        static int shiftPos;
-        switch( shiftPos )
-        {
-            case 0:
-            default:
-                // I=I Q=Q
-                shiftPos = 1;
-                break;
-
-            case 1:
-                origI = inI;
-                inI = -inQ;
-                inQ = origI;
-                shiftPos = 2;
-                break;
-
-            case 2:
-                inI = -inI;
-                inQ = -inQ;
-                shiftPos = 3;
-                break;        
-
-            case 3:
-                origI = inI;
-                inI = inQ;
-                inQ = -origI;
-                shiftPos = 0;
-                break;
-        }
+        shiftFrequency( &inI, &inQ );
     }
 
     switch( outputSource )
@@ -741,12 +898,61 @@ static inline void processAudio()
         out = fir(out, &OutCurrentSample, OutBuffer, filters[currentFilter].taps, filters[currentFilter].numTaps, filters[currentFilter].precision);;
     }
 
-    static uint8_t actualVolume;
-    static uint8_t volumeFadeRate = MAX_VOLUME;
-    static uint8_t volumeFadeCount;
     static bool bWasMuted;
 
     // Mute the RX if required
+#if 1
+#define MIN_MUTE_FACTOR 128
+    static int muteFactor;
+    static bool waitingZeroCross;
+
+    if( bMuteRX )
+    {
+        bWasMuted = true;
+        //out = 0;
+        muteFactor = 0;
+
+        // We will unmute on a zero crossing
+        waitingZeroCross = true;
+    }
+    else
+    {
+        // Keep track of whether the current and previous samples are
+        // positive or not - the top bit of the 16 bit integer is the sign bit
+        static int16_t prevOut;
+        bool outPositive = (((uint16_t)out) & 0x8000 ? false : true);
+        bool prevOutPositive = (((uint16_t)prevOut) & 0x8000 ? false : true);
+        prevOut = out;
+
+        // Keep waiting for a zero cross until we see a sign change
+        if( waitingZeroCross )
+        {
+            if( outPositive != prevOutPositive )
+            {
+                waitingZeroCross = false;
+            }
+        }
+
+        // If we aren't waiting for a zero cross we can
+        // proceed
+        if( !waitingZeroCross )
+        {
+            // On unmute bring the volume up slowly to avoid clicks
+            if( bWasMuted && (muteFactor < MIN_MUTE_FACTOR) )
+            {
+                muteFactor++;
+            }
+            else
+            {
+                bWasMuted = false;
+                muteFactor = MIN_MUTE_FACTOR;
+            }
+        }
+    }
+#else
+    static uint8_t actualVolume;
+    static uint8_t volumeFadeRate = MAX_VOLUME;
+    static uint8_t volumeFadeCount;
     if( bMuteRX )
     {
         bWasMuted = true;
@@ -758,7 +964,7 @@ static inline void processAudio()
         }
         else
         {
-            volumeFadeRate = MAX_VOLUME / volume + 20;
+            volumeFadeRate = 4; // MAX_VOLUME / volume + 5;
         }
         volumeFadeCount = 0;
     }
@@ -780,6 +986,7 @@ static inline void processAudio()
             actualVolume = volume;
         }
     }
+#endif
 
     // Insert sidetone and set the appropriate volume
     // When the sidetone is switched off we fade it down to
@@ -808,15 +1015,12 @@ static inline void processAudio()
         }
     }
 
-    if( actualSidetoneVolume > 0 )
-    {
-        out = sinewave();
-        vol = volumeMultiplier[actualSidetoneVolume];
-    }
-    else
-    {
-        vol = volumeMultiplier[actualVolume];
-    }
+#if 1
+    vol = volumeMultiplier[volume];
+    out = (int)out * muteFactor / MIN_MUTE_FACTOR;
+#else
+    vol = volumeMultiplier[actualVolume];
+#endif
 
     if( currentFilter >= 0 && currentFilter < NUM_FILTERS && filters[currentFilter].binaural )
     {
@@ -827,6 +1031,12 @@ static inline void processAudio()
     else
     {
         outLeft = outRight = out;
+    }
+
+    if( actualSidetoneVolume > 0 )
+    {
+        outLeft = outRight = sinewave();
+        vol = volumeMultiplier[actualSidetoneVolume];
     }
 
     // Convert the samples to unsigned for the PWM and apply the volume
@@ -844,30 +1054,38 @@ static inline void processAudio()
     maxInput = (maxInput*(FACTOR-1) + abs(out))/FACTOR;
 #endif
 //    maxInput += abs(out)*1024;
-    clearAdcDebug2();
 }
-
-#define ADC_BUFFER_SIZE 16
-
-static int captureDma;
-static dma_channel_config captureCfg;
-
-static int adcDma0;
-static int adcDma1;
-static dma_channel_config dmaCfg0;
-static dma_channel_config dmaCfg1;
-static uint16_t adcBuffer0[ADC_BUFFER_SIZE];
-static uint16_t adcBuffer1[ADC_BUFFER_SIZE];
 
 // Feed from a DMA buffer into the FIR
 static inline void feedFir( uint16_t *buf )
 {
-    int i;
-    for( i = 0 ; i < ADC_BUFFER_SIZE/2 ; i++ )
+    int numTaps;
+    static int ixm1, iym1;
+    static int qxm1, qym1;
+
+    for( int i = 0 ; i < ADC_BUFFER_SIZE/2 ; i++ )
     {
         // Samples alternate between I and Q in DMA buffer and must be converted to signed
-        firIn(((int)buf[i*2]   - ADC_OFFSET), &ICurrentSample, IBuffer, ROOFING_FILTER_TAP_NUM);
-        firIn(((int)buf[i*2]+1 - ADC_OFFSET), &QCurrentSample, QBuffer, ROOFING_FILTER_TAP_NUM);
+#if 1
+        // Remove any DC
+//        int ix = ((int)buf[i*2]   - ADC_OFFSET);
+        int ix = buf[i*2];
+        int iy = ix - ixm1 + (254 * iym1) / 256;
+        ixm1 = ix;
+        iym1 = iy;
+        firIn(iy, &iIn12864, iDecimate12864Buffer, DECIMATE_BUFFER_LEN);
+
+        // Remove any DC
+//        int qx = ((int)buf[i*2+1]   - ADC_OFFSET);
+        int qx = buf[i*2+1];
+        int qy = qx - qxm1 + (254 * qym1) / 256;
+        qxm1 = qx;
+        qym1 = qy;
+        firIn(qy, &qIn12864, qDecimate12864Buffer, DECIMATE_BUFFER_LEN);
+#else
+        firIn(((int)buf[i*2]   - ADC_OFFSET), &iIn12864, iDecimate12864Buffer, DECIMATE_BUFFER_LEN);
+        firIn(((int)buf[i*2+1] - ADC_OFFSET), &qIn12864, qDecimate12864Buffer, DECIMATE_BUFFER_LEN);
+#endif
     }
 }
 
