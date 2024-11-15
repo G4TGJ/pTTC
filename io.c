@@ -180,8 +180,21 @@ static dma_channel_config dmaCfg1;
 static uint16_t adcBuffer0[ADC_BUFFER_SIZE];
 static uint16_t adcBuffer1[ADC_BUFFER_SIZE];
 
-static int currentSinePos;
+// Keep track of whether the input has overloaded
+// Unsigned so overloads if goes near zero or max
+#define ADC_OVERLOAD_LOW 10
+#define ADC_OVERLOAD_HIGH 4080
 
+// Set true if overload detected
+bool adcOverload;
+int adcOverloadCount;
+
+// Reset the overload flag every second
+#define ADC_OVERLOAD_RESET_COUNT 8000
+static int adcOverloadResetCount;
+
+// Generate a sinewave for the sidetone
+static int currentSinePos;
 static inline int16_t sinewave()
 {
     int16_t val = sine700[currentSinePos];
@@ -460,6 +473,7 @@ static inline int16_t calcPWM( int16_t out, int16_t vol )
     return outPWM;
 }
 
+#if 1
 // Shift the frequency by 1/4 of the sample rate
 static inline void shiftFrequency( int16_t *pI, int16_t *pQ )
 {
@@ -494,6 +508,42 @@ static inline void shiftFrequency( int16_t *pI, int16_t *pQ )
             break;
     }
 }
+
+#else
+static inline void shiftFrequency( int16_t *pI, int16_t *pQ )
+{
+    int16_t origI;
+    static int shiftPos;
+    switch( shiftPos )
+    {
+        case 0:
+        default:
+            // I=I Q=Q
+            shiftPos = 1;
+            break;
+
+        case 1:
+            origI = *pI;
+            *pI = *pQ;
+            *pQ = -origI;
+            shiftPos = 2;
+            break;
+
+        case 2:
+            *pI = -*pI;
+            *pQ = -*pQ;
+            shiftPos = 3;
+            break;        
+
+        case 3:
+            origI = *pI;
+            *pI = -*pQ;
+            *pQ = origI;
+            shiftPos = 0;
+            break;
+    }
+}
+#endif
 
 // Process the input I and Q samples and generate the output sample
 // The input and the output are done in the interrupt handler
@@ -531,8 +581,6 @@ static inline void processAudio()
             // 2, 4, 6, 8
             if( (i%2) == 0 )
             {
-                toggleAdcDebug2();
-
                 // 32Ksps
                 switch ( intermediateFrequency )
                 {
@@ -753,6 +801,15 @@ static inline void processAudio()
 #define FACTOR 128
     maxInput = (maxInput*(FACTOR-1) + abs(out))/FACTOR;
 //    maxInput += abs(out)*1024;
+
+    // Reset the ADC overload flag every second
+    adcOverloadResetCount++;
+    if( adcOverloadResetCount > ADC_OVERLOAD_RESET_COUNT )
+    {
+        adcOverload = false;
+        adcOverloadCount = 0;
+        adcOverloadResetCount = 0;
+    }
 }
 
 // Feed from a DMA buffer into the FIR
@@ -779,6 +836,16 @@ static inline void feedFir( uint16_t *buf )
         qxm1 = qx;
         qym1 = qy;
         firIn(qy, &qIn12864, qDecimate12864Buffer, DECIMATE_BUFFER_LEN);
+
+        if( ix < ADC_OVERLOAD_LOW || ix > ADC_OVERLOAD_HIGH || qx < ADC_OVERLOAD_LOW || qx > ADC_OVERLOAD_HIGH )
+        {
+            adcOverloadCount++;
+            toggleAdcDebug2();
+            //if( adcOverloadCount > 10 )
+            {
+                adcOverload = true;
+            }
+        }
     }
 #endif
 }
