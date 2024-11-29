@@ -15,9 +15,9 @@ enum sdrSource
 
 extern enum sdrSource outputSource;
 
-extern int16_t iGain;
-extern int16_t qGain;
-extern int16_t iqGain;
+extern int iGain;
+extern int qGain;
+extern int iqGain;
 
 extern bool applyGains;
 extern bool applyRoofingFilter;

@@ -4,6 +4,163 @@ http://t-filter.engineerjs.com/
 */
 
 /*
+sampling frequency: 256000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 11000 Hz
+  gain = 1
+  desired ripple = 0.1 dB
+  actual ripple = n/a
+
+* 117000 Hz - 128000 Hz
+  gain = 0
+  desired attenuation = -60 dB
+  actual attenuation = n/a
+
+*/
+
+#define INTERPOLATE_FILTER_TAP_NUM 7
+#define INTERPOLATE_FILTER_PRECISION 15
+
+static int interpolateFilterTaps[INTERPOLATE_FILTER_TAP_NUM] =
+{
+  -1051,
+  61,
+  9246,
+  16272,
+  9246,
+  61,
+  -1051
+};
+
+#if 0
+/*
+
+FIR filter designed with
+http://t-filter.appspot.com
+
+sampling frequency: 128000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 2000 Hz
+  gain = 1
+  desired ripple = 0.1 dB
+  actual ripple = n/a
+
+* 8000 Hz - 64000 Hz
+  gain = 0
+  desired attenuation = -40 dB
+  actual attenuation = n/a
+
+*/
+
+#define DECIMATE_128_64_FILTER_TAP_NUM 55
+#define DECIMATE_128_64_FILTER_PRECISION 15
+
+static int decimate12864FilterTaps[DECIMATE_128_64_FILTER_TAP_NUM] =
+{
+  122,
+  23,
+  13,
+  -8,
+  -39,
+  -79,
+  -126,
+  -176,
+  -225,
+  -265,
+  -290,
+  -293,
+  -266,
+  -204,
+  -101,
+  44,
+  232,
+  460,
+  721,
+  1006,
+  1305,
+  1604,
+  1889,
+  2146,
+  2362,
+  2525,
+  2627,
+  2661,
+  2627,
+  2525,
+  2362,
+  2146,
+  1889,
+  1604,
+  1305,
+  1006,
+  721,
+  460,
+  232,
+  44,
+  -101,
+  -204,
+  -266,
+  -293,
+  -290,
+  -265,
+  -225,
+  -176,
+  -126,
+  -79,
+  -39,
+  -8,
+  13,
+  23,
+  122
+};
+
+#else
+#if 1
+/*
+sampling frequency: 128000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 4000 Hz
+  gain = 1
+  desired ripple = 0.1 dB
+  actual ripple = n/a
+
+* 32000 Hz - 64000 Hz
+  gain = 0
+  desired attenuation = -40 dB
+  actual attenuation = n/a
+
+*/
+
+#define DECIMATE_128_64_FILTER_TAP_NUM 15
+#define DECIMATE_128_64_FILTER_PRECISION 15
+
+static int decimate12864FilterTaps[DECIMATE_128_64_FILTER_TAP_NUM] =
+{
+  -55,
+  -345,
+  -698,
+  -444,
+  1261,
+  4428,
+  7688,
+  9085,
+  7688,
+  4428,
+  1261,
+  -444,
+  -698,
+  -345,
+  -55
+};
+
+#else
+/*
 sampling frequency: 128000 Hz
 
 fixed point precision: 16 bits
@@ -33,6 +190,8 @@ static int decimate12864FilterTaps[DECIMATE_128_64_FILTER_TAP_NUM] =
   -142,
   -1205
 };
+#endif
+#endif
 
 /*
 sampling frequency: 64000 Hz
@@ -105,6 +264,63 @@ static int decimate64322FilterTaps[DECIMATE_64_32_2_FILTER_TAP_NUM] =
   -304
 };
 
+#if 1
+/*
+sampling frequency: 64000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 11000 Hz
+  gain = 1
+  desired ripple = 0.1 dB
+  actual ripple = n/a
+
+* 16000 Hz - 32000 Hz
+  gain = 0
+  desired attenuation = -40 dB
+  actual attenuation = n/a
+
+*/
+
+#define DECIMATE_64_32_8_FILTER_TAP_NUM 31
+#define DECIMATE_64_32_8_FILTER_PRECISION 15
+
+static int decimate64328FilterTaps[DECIMATE_64_32_8_FILTER_TAP_NUM] =
+{
+  156,
+  -1,
+  -253,
+  -110,
+  328,
+  413,
+  -339,
+  -821,
+  39,
+  1372,
+  709,
+  -1877,
+  -2536,
+  2283,
+  10081,
+  13976,
+  10081,
+  2283,
+  -2536,
+  -1877,
+  709,
+  1372,
+  39,
+  -821,
+  -339,
+  413,
+  328,
+  -110,
+  -253,
+  -1,
+  156
+};
+#else
+
 /*
 sampling frequency: 64000 Hz
 
@@ -149,7 +365,54 @@ static int decimate64328FilterTaps[DECIMATE_64_32_8_FILTER_TAP_NUM] =
   146,
   58
 };
+#endif
 
+#if 1
+/*
+sampling frequency: 32000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 3000 Hz
+  gain = 1
+  desired ripple = 0.1 dB
+  actual ripple = n/a
+
+* 8000 Hz - 16000 Hz
+  gain = 0
+  desired attenuation = -60 dB
+  actual attenuation = n/a
+
+*/
+
+#define DECIMATE_32_16_FILTER_TAP_NUM 21
+#define DECIMATE_32_16_FILTER_PRECISION 15
+
+static int decimate3216FilterTaps[DECIMATE_32_16_FILTER_TAP_NUM] =
+{
+  -36,
+  24,
+  247,
+  397,
+  -25,
+  -1053,
+  -1587,
+  20,
+  4161,
+  8838,
+  10907,
+  8838,
+  4161,
+  20,
+  -1587,
+  -1053,
+  -25,
+  397,
+  247,
+  24,
+  -36
+};
+#else
 /*
 sampling frequency: 32000 Hz
 
@@ -184,7 +447,9 @@ static int decimate3216FilterTaps[DECIMATE_32_16_FILTER_TAP_NUM] =
   98,
   373
 };
+#endif
 
+#if 1
 /*
 sampling frequency: 16000 Hz
 
@@ -202,10 +467,10 @@ fixed point precision: 16 bits
 
 */
 
-#define DECIMATE_16_8_FILTER_TAP_NUM 39
-#define DECIMATE_16_8_FILTER_PRECISION 15
+#define DECIMATE_16_08_FILTER_TAP_NUM 39
+#define DECIMATE_16_08_FILTER_PRECISION 15
 
-static int decimate168FilterTaps[DECIMATE_16_8_FILTER_TAP_NUM] =
+static int decimate1608FilterTaps[DECIMATE_16_08_FILTER_TAP_NUM] =
 {
   124,
   -4,
@@ -247,6 +512,99 @@ static int decimate168FilterTaps[DECIMATE_16_8_FILTER_TAP_NUM] =
   -4,
   124
 };
+#else
+
+/*
+sampling frequency: 16000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 250 Hz
+  gain = 1
+  desired ripple = 0.1 dB
+  actual ripple = n/a
+
+* 1000 Hz - 8000 Hz
+  gain = 0
+  desired attenuation = -60 dB
+  actual attenuation = n/a
+
+*/
+
+#define DECIMATE_16_8_FILTER_TAP_NUM 67
+#define DECIMATE_16_8_FILTER_PRECISION 15
+
+static int decimate168FilterTaps[DECIMATE_16_8_FILTER_TAP_NUM] =
+{
+  24,
+  17,
+  21,
+  22,
+  20,
+  13,
+  1,
+  -18,
+  -43,
+  -74,
+  -111,
+  -150,
+  -189,
+  -224,
+  -250,
+  -262,
+  -256,
+  -225,
+  -167,
+  -77,
+  45,
+  202,
+  389,
+  605,
+  842,
+  1093,
+  1349,
+  1601,
+  1836,
+  2046,
+  2221,
+  2352,
+  2433,
+  2460,
+  2433,
+  2352,
+  2221,
+  2046,
+  1836,
+  1601,
+  1349,
+  1093,
+  842,
+  605,
+  389,
+  202,
+  45,
+  -77,
+  -167,
+  -225,
+  -256,
+  -262,
+  -250,
+  -224,
+  -189,
+  -150,
+  -111,
+  -74,
+  -43,
+  -18,
+  1,
+  13,
+  20,
+  22,
+  21,
+  17,
+  24
+};
+#endif
 
 // Size of all the decimate buffers
 // Must be bigger than all the filters
@@ -277,6 +635,7 @@ fixed point precision: 16 bits
 */
 
 #define LEFT_FILTER_TAP_NUM 63
+#define LEFT_BUFFER_LEN 64
 #define LEFT_FILTER_PRECISION 15
 
 static int leftFilterTaps[LEFT_FILTER_TAP_NUM] =
@@ -364,6 +723,7 @@ fixed point precision: 16 bits
 */
 
 #define RIGHT_FILTER_TAP_NUM 63
+#define RIGHT_BUFFER_LEN 64
 #define RIGHT_FILTER_PRECISION 15
 
 static int rightFilterTaps[RIGHT_FILTER_TAP_NUM] =
@@ -1717,5 +2077,5 @@ filters[NUM_FILTERS]=
 };
 
 // Size of the buffer so must be at least as large as the
-// biggest number of taps above
-#define FILTER_TAP_NUM 280
+// biggest number of taps above and a power of 2
+#define OUTPUT_BUFFER_LEN 512

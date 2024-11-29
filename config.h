@@ -181,7 +181,7 @@
 
 #define MAX_I_GAIN 32767
 #define MIN_I_GAIN -32768
-#define DEFAULT_I_GAIN MAX_I_GAIN
+#define DEFAULT_I_GAIN 0//MAX_I_GAIN
 
 #define MAX_Q_GAIN 32767
 #define MIN_Q_GAIN -32768
@@ -327,6 +327,7 @@
 #define AUDIO_WRAP 4094
 
 #define DEFAULT_FILTER 1
+#define DEFAULT_HILBERT_FILTER 3
 
 // Possible intermediate frequencies
 enum eIF
@@ -337,3 +338,5 @@ enum eIF
   NUM_IF
 };
 
+#define INTERMEDIATE_FREQUENCY 8000
+#define BFO_SAMPLE_RATE        2000
