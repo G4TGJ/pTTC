@@ -752,16 +752,15 @@ static inline void shiftFrequency2( int *pI, int *pQ )
 #endif
 
 // Numerically controlled oscillator
-// Only one instance
 
 // Integer value representing 1.0
 #define NCO_SCALE   32768
 
 // The number of bits to shift the phase down
-#define NCO_BITS    4
+#define NCO_BITS    3
 
 // Length of the cosine table
-#define NCO_COS_LEN 4096
+#define NCO_COS_LEN 8192
 
 // Cosine table. Populated in ncoInit()
 static int ncoCos[NCO_COS_LEN];
@@ -819,7 +818,7 @@ static inline void ncoOscIncrementPhase( struct sNCO *nco )
     nco->phase += nco->ncoFCW;
 }
 
-// Initialised the NCO cosine table
+// Initialise the NCO cosine table
 static void ncoInit( void )
 {
     for( int i = 0 ; i < NCO_COS_LEN ; i++ )
@@ -1185,13 +1184,13 @@ static inline void feedFir( uint16_t *buf )
         // Zero pad
         int ix = buf[i*2];
         int iy = removeDC( ix, &ixm1, &iym1 );
-        firIn(iy, &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
+        firIn(iy*2, &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
         firIn(0,  &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
 
         int qx = buf[i*2+1];
         int qy = removeDC( qx, &qxm1, &qym1 );
         firIn(0,  &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
-        firIn(qy, &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
+        firIn(qy*2, &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
 
 #ifdef DISPLAY_MIN_MAX
         if( ix > maxIn )
