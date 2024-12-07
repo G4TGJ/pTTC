@@ -165,7 +165,7 @@
 
 // Minimum and maximum volume levels
 #define MIN_VOLUME 0
-#define MAX_VOLUME 32
+#define MAX_VOLUME 40
 #define DEFAULT_VOLUME 11
 #define DEFAULT_SIDETONE_VOLUME 8
 #define MIN_SIDETONE_VOLUME MIN_VOLUME
@@ -325,8 +325,9 @@
 #define AUDIO_DIVIDE 1
 
 #define AUDIO_WRAP 4094
+//#define AUDIO_WRAP 254
 
-#define DEFAULT_FILTER 1
+#define DEFAULT_FILTER 2
 #define DEFAULT_HILBERT_FILTER 3
 
 // Possible intermediate frequencies
@@ -338,5 +339,5 @@ enum eIF
   NUM_IF
 };
 
-#define INTERMEDIATE_FREQUENCY 8000
-#define BFO_SAMPLE_RATE        2000
+#define INTERMEDIATE_FREQUENCY 12000
+#define BFO_SAMPLE_RATE         8000
