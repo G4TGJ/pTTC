@@ -330,14 +330,5 @@
 #define DEFAULT_FILTER 2
 #define DEFAULT_HILBERT_FILTER 3
 
-// Possible intermediate frequencies
-enum eIF
-{
-  IF_0KHZ,
-  IF_2KHZ,
-  IF_8KHZ,
-  NUM_IF
-};
-
 #define INTERMEDIATE_FREQUENCY 12000
 #define BFO_SAMPLE_RATE         8000

@@ -315,8 +315,8 @@ static int currentFilter = DEFAULT_FILTER;
 static int currentHilbertFilter = DEFAULT_HILBERT_FILTER;
 bool applyRoofingFilter = true;
 
-// The selected intermediate frequency
-enum eIF intermediateFrequency = IF_8KHZ;
+// Whether or not intermediate frequency is above or below
+bool ifBelow = true;
 
 int iGain = DEFAULT_I_GAIN;
 int qGain = DEFAULT_Q_GAIN;
@@ -892,20 +892,17 @@ static inline void processAudio()
 
     if( applyRoofingFilter )
     {
-        if( intermediateFrequency == IF_8KHZ )
+        setAdcDebug2();
+        // Shift the frequency down 8kHz
+        for( int p = 0 ; p < INPUT_SIZE ; p++ )
         {
-            setAdcDebug2();
-            // Shift the frequency down 8kHz
-            for( int p = 0 ; p < INPUT_SIZE ; p++ )
-            {
-                // Get the input buffer positions allowing for buffer wrap
-                int iPos = (iIn12864+p)&(DECIMATE_BUFFER_LEN-1);
-                int qPos = (qIn12864+p)&(DECIMATE_BUFFER_LEN-1);
-                
-                complexMixer( &iInputBuffer[iPos], &qInputBuffer[qPos], &ncoIF );
-            }
-            clearAdcDebug2();
+            // Get the input buffer positions allowing for buffer wrap
+            int iPos = (iIn12864+p)&(DECIMATE_BUFFER_LEN-1);
+            int qPos = (qIn12864+p)&(DECIMATE_BUFFER_LEN-1);
+            
+            complexMixer( &iInputBuffer[iPos], &qInputBuffer[qPos], &ncoIF );
         }
+        clearAdcDebug2();
 
 #define CIC_ORDER 3
 #define CIC_DECIMATION_FACTOR 16
@@ -953,15 +950,6 @@ static inline void processAudio()
     {
         inI += ((int)inQ) * iqGain / 32768;
     }
-
-    // If it's a 2kHz IF we shift the frequency here
-    // because it's 1/4 of the 8kHz sample rate
-    if( intermediateFrequency == IF_2KHZ )
-    {
-        shiftFrequencyDown( &inI, &inQ );
-    }
-
-    //shiftFrequencyUp( &inI, &inQ );
 
     // Apply the CW filter
     if( currentFilter >= 0 && currentFilter < NUM_FILTERS && filters[currentFilter].taps != NULL)
@@ -1266,6 +1254,14 @@ static void adc_interrupt_handler()
     clearAdcDebug1();
 }
 
+void ioSetIF( void )
+{
+    // Set the IF oscillator
+    // Because we zero stuff the sample rate
+    // is twice the ADC rate
+    ncoSet( &ncoIF, ifBelow ? INTERMEDIATE_FREQUENCY : -INTERMEDIATE_FREQUENCY, 2 * ADC_SAMPLE_RATE );
+}
+
 void core1_main()
 {
 #ifdef ADC_DEBUG1_OUTPUT_GPIO
@@ -1279,9 +1275,7 @@ void core1_main()
     ncoInit();
 
     // Set the IF oscillator
-    // Because we zero stuff the sample rate
-    // is twice the ADC rate
-    ncoSet( &ncoIF, INTERMEDIATE_FREQUENCY, 2 * ADC_SAMPLE_RATE );
+    ioSetIF();
 
     // Set the BFO
     ncoSet( &ncoBFO, -RX_OFFSET, BFO_SAMPLE_RATE );
