@@ -212,6 +212,9 @@ static int adcOverloadResetCount;
 int maxIn, maxOut, minIn, minOut;
 #endif
 
+// Maximum mute factor when unmuting
+int maxMuteFactor = DEFAULT_MAX_MUTE_FACTOR;
+
 // Generate a sinewave for the sidetone
 static int currentSinePos;
 static inline int sinewave()
@@ -1040,7 +1043,6 @@ static inline void processAudio()
     static bool bWasMuted;
 
     // Mute the RX if required
-#define MIN_MUTE_FACTOR 2000
     static int muteFactor;
     static bool waitingZeroCross;
 
@@ -1076,14 +1078,14 @@ static inline void processAudio()
         if( !waitingZeroCross )
         {
             // On unmute bring the volume up slowly to avoid clicks
-            if( bWasMuted && (muteFactor < MIN_MUTE_FACTOR) )
+            if( bWasMuted && (muteFactor < maxMuteFactor) )
             {
                 muteFactor++;
             }
             else
             {
                 bWasMuted = false;
-                muteFactor = MIN_MUTE_FACTOR;
+                muteFactor = maxMuteFactor;
             }
         }
     }
@@ -1114,7 +1116,7 @@ static inline void processAudio()
             }
         }
     }
-    out = ((int)out * muteFactor) / MIN_MUTE_FACTOR;
+    out = ((int)out * muteFactor) / maxMuteFactor;
 #endif
 
     // Apply the volume
