@@ -215,6 +215,9 @@ int maxIn, maxOut, minIn, minOut;
 // Maximum mute factor when unmuting
 int maxMuteFactor = DEFAULT_MAX_MUTE_FACTOR;
 
+// True if binaural output
+bool bBinaural;
+
 // Generate a sinewave for the sidetone
 static int currentSinePos;
 static inline int sinewave()
@@ -951,14 +954,7 @@ static inline void processAudio()
     // Apply the volume
     out = (out*volumeMultiplier[volume])/VOLUME_PRECISION;
 
-#if 0
-    // Apply the CW filter
-    if( currentFilter >= 0 && currentFilter < NUM_FILTERS && filters[currentFilter].taps != NULL)
-    {
-        out = fir(out, &OutCurrentSample, OutBuffer, OUTPUT_BUFFER_LEN, filters[currentFilter].taps, filters[currentFilter].numTaps, filters[currentFilter].precision);;
-    }
-
-    if( currentFilter >= 0 && currentFilter < NUM_FILTERS && filters[currentFilter].binaural )
+    if( bBinaural )
     {
         // Apply LPF to left and HPF to right to get binaural effect
         outLeft  = fir(out, &leftCurrentSample,  leftBuffer,  LEFT_BUFFER_LEN,  leftFilterTaps,  LEFT_FILTER_TAP_NUM,  LEFT_FILTER_PRECISION);
@@ -968,18 +964,19 @@ static inline void processAudio()
     {
         outLeft = outRight = out;
     }
-#endif
 
     if( actualSidetoneVolume > 0 )
     {
         int sidetone = (sinewave()*volumeMultiplier[actualSidetoneVolume])/VOLUME_PRECISION;
-        out += sidetone;
+        outLeft += sidetone;
+        outRight += sidetone;
     }
 
-    out = fir(out, &outCurrentSample, outBuffer, OUTPUT_BUFFER_LEN, cwFilterTaps1, CW_FILTER_TAP_NUM_1, CW_FILTER_PRECISION_1);
+    //out = fir(out, &outCurrentSample, outBuffer, OUTPUT_BUFFER_LEN, cwFilterTaps1, CW_FILTER_TAP_NUM_1, CW_FILTER_PRECISION_1);
 
     // Convert the samples for the PWM
-    outPWMRight = outPWMLeft = calcPWM( out);
+    outPWMRight = calcPWM( outRight);
+    outPWMLeft = calcPWM( outLeft);
 
 #define FACTOR 128
     maxInput = (maxInput*(FACTOR-1) + abs(out))/FACTOR;
