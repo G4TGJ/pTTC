@@ -458,36 +458,8 @@ static inline void decimate( int factor, int count, int *inBuf, int inBufLen, ui
     }
 }
 
-static inline int firOut2( uint16_t current, int *buffer, int bufLen, const int *taps, int numTaps, int precision )
-{
-    int tap;
-    uint16_t index;
-    int32_t result = 0;
-
-    // Calculate the result from the FIR filter
-    index = current;
-    for( tap = 0 ; tap < numTaps ; tap++ )
-    {
-        index = (index-1) & (bufLen-1);
-        result += ((int32_t) buffer[index]) * taps[tap];
-    }
-
-    // Extract the significant bits
-    return result  / 32768; //>> precision;
-    //return (result + 16384) / 32768; //>> precision;
-    //return (result + 32768) / 65536;
-}
-
-static inline void decimate2( int factor, int count, int *inBuf, int inBufLen, uint16_t *inPos, int *outBuf, int outBufLen, uint16_t *outPos, const int *taps, int numTaps, int precision )
-{
-    int out = firOut2( *inPos, inBuf, inBufLen, taps, numTaps, precision );
-    *outBuf = out;
-    *inPos = (*inPos+factor) & (inBufLen-1);
-}
-
 static inline void decimateCIC( int factor, int order, int gainBits, int count, int *inBuf, int inBufLen, uint16_t *inPos, int *accumulator, int *combOutput, int *previousInput, int *outBuf, int outBufLen, uint16_t *outPos )
 {
-#if 1
     int i,j;
 
     // Process each sample
@@ -530,50 +502,12 @@ static inline void decimateCIC( int factor, int order, int gainBits, int count, 
 
             // Store the result in the output buffer
             // j-1 is because the for has incremented at the end.
-//            outBuf[*outPos] = combOutput[j-1] >> gainBits;
-            int out = combOutput[j-1] >> gainBits;
-            outBuf[*outPos] = out;
+            outBuf[*outPos] = combOutput[j-1] >> gainBits;
 
             // Move the output pointer
             *outPos = (*outPos + 1) & (outBufLen-1);
         }
     }
-#else
-    // Remember the start position for the comb filter
-    int combPos = *inPos;
-
-    // Integrate each input sample
-    for( int i = 0 ; i < count ; i++ )
-    {
-        acc[*inPos] = inBuf[*inPos];
-
-        for( int j = 0 ; j < order ; j++ )
-        {
-            // Integrator
-            acc[*inPos] = acc[*inPos] + acc[(*inPos-1)&(inBufLen-1)];
-        }
-
-        // Move the input pointer
-        // Which is also the accumulator pointer
-        *inPos = (*inPos+1) & (inBufLen-1);
-    }
-
-    // Now process the decimated output
-    for( int i = 0 ; i < count/factor ; i++ )
-    {
-        outBuf[*outPos] = acc[combPos];
-
-        for( int j = 0 ; j < order ; j++ )
-        {
-            // Comb
-            outBuf[*outPos] = (outBuf[*outPos] - acc[(combPos-factor)&(inBufLen-1)]) / factor;
-        }
-
-        // Move the comb and output pointers
-        combPos = (combPos + factor) & (inBufLen-1);
-        *outPos = (*outPos + 1) & (outBufLen-1);
-    }
-#endif
 }
 
 // bufLen must be a power of 2
@@ -676,84 +610,6 @@ static inline int calcPWM( int out )
     return outPWM;
 }
 
-// Shift the frequency by 1/4 of the sample rate
-static inline void shiftFrequency1( int *pI, int *pQ )
-{
-    int origI;
-    static int shiftPos;
-    switch( shiftPos )
-    {
-        case 0:
-        default:
-            // I=I Q=Q
-            shiftPos = 1;
-            break;
-
-        case 1:
-            origI = *pI;
-            *pI = -*pQ;
-            *pQ = origI;
-            shiftPos = 2;
-            break;
-
-        case 2:
-            *pI = -*pI;
-            *pQ = -*pQ;
-            shiftPos = 3;
-            break;        
-
-        case 3:
-            origI = *pI;
-            *pI = *pQ;
-            *pQ = -origI;
-            shiftPos = 0;
-            break;
-    }
-}
-
-static inline void shiftFrequency2( int *pI, int *pQ )
-{
-    int origI;
-    static int shiftPos;
-    switch( shiftPos )
-    {
-        case 0:
-        default:
-            // I=I Q=Q
-            shiftPos = 1;
-            break;
-
-        case 1:
-            origI = *pI;
-            *pI = *pQ;
-            *pQ = -origI;
-            shiftPos = 2;
-            break;
-
-        case 2:
-            *pI = -*pI;
-            *pQ = -*pQ;
-            shiftPos = 3;
-            break;        
-
-        case 3:
-            origI = *pI;
-            *pI = -*pQ;
-            *pQ = origI;
-            shiftPos = 0;
-            break;
-    }
-}
-
-#if 1
-#define shiftFrequencyDown shiftFrequency1
-#define shiftFrequencyUp   shiftFrequency2
-#else
-// Correct
-#define shiftFrequencyDown shiftFrequency2
-#define shiftFrequencyUp   shiftFrequency1
-#endif
-
 // Numerically controlled oscillator
 
 // Integer value representing 1.0
@@ -786,7 +642,6 @@ static struct sNCO ncoBFO;
 // Calculates the frequency control word for the frequency and given sample rate
 static void ncoSet( struct sNCO *nco, int frequency, int sampleRate)
 {
-    printf("ncoSet frequency %d sample rate %d\n", frequency, sampleRate);
     nco->phase = 0;
     nco->ncoFCW = ((frequency * NCO_COS_LEN) << NCO_BITS) / sampleRate;
 }
@@ -828,27 +683,6 @@ static void ncoInit( void )
     {
         ncoCos[i] = cos( 2.0 * M_PI * i / NCO_COS_LEN) * NCO_SCALE;
     }
-
-#if 0
-    ncoSet( 8000, 32000 );
-    printf("ncoFCW=%d\n", ncoFCW);
-
-    for( int i = 0 ; i < 10 ; i++ )
-    {
-        printf("%d i=%d q=%d\n", i, ncoOscI(), ncoOscQ());
-        ncoOscIncrementPhase();
-    }
-
-    ncoSet( -8000, 32000 );
-    printf("ncoFCW=%d\n", ncoFCW);
-
-    for( int i = 0 ; i < 10 ; i++ )
-    {
-        printf("%d i=%d q=%d\n", i, ncoOscI(), ncoOscQ());
-        ncoOscIncrementPhase();
-    }
-
-#endif
 }
 
 static inline void complexMixer( int *pI, int *pQ, struct sNCO *ncoIF )
@@ -924,22 +758,17 @@ static inline void processAudio()
         decimateCIC( CIC_DECIMATION_FACTOR, CIC_ORDER, CIC_GAIN_BITS, INPUT_SIZE, iInputBuffer, DECIMATE_BUFFER_LEN, &iIn12864, iAccumulateBuffer, iCombOutput, iCombPreviousInput, iDecimate1608Buffer, DECIMATE_BUFFER_LEN, &iOut12864 );
         decimateCIC( CIC_DECIMATION_FACTOR, CIC_ORDER, CIC_GAIN_BITS, INPUT_SIZE, qInputBuffer, DECIMATE_BUFFER_LEN, &qIn12864, qAccumulateBuffer, qCombOutput, qCombPreviousInput, qDecimate1608Buffer, DECIMATE_BUFFER_LEN, &qOut12864 );
 
-#if 0
-        inI = iDecimate1608Buffer[iOut12864];
-        inQ = qDecimate1608Buffer[qOut12864];
-#else
         // Filter and decimate from 16ksps to 8ksps
         // This leaves us with a single pair of I and Q
         decimate( 2, INPUT_SIZE/CIC_DECIMATION_FACTOR, iDecimate1608Buffer, DECIMATE_BUFFER_LEN, &iIn1608, &inI, 1, &iOut08, decimate1608FilterTaps, DECIMATE_16_08_FILTER_TAP_NUM, DECIMATE_16_08_FILTER_PRECISION );
         decimate( 2, INPUT_SIZE/CIC_DECIMATION_FACTOR, qDecimate1608Buffer, DECIMATE_BUFFER_LEN, &qIn1608, &inQ, 1, &qOut08, decimate1608FilterTaps, DECIMATE_16_08_FILTER_TAP_NUM, DECIMATE_16_08_FILTER_PRECISION );
-#endif
     }
     else
     {
         inI = iInputBuffer[iInPos];
         inQ = qInputBuffer[qInPos];
     }
-    //clearAdcDebug2();
+
     // Apply I and Q gains
     if( applyGains )
     {
@@ -1141,13 +970,11 @@ static inline void processAudio()
     }
 #endif
 
-#if 1
     if( actualSidetoneVolume > 0 )
     {
         int sidetone = (sinewave()*volumeMultiplier[actualSidetoneVolume])/VOLUME_PRECISION;
         out += sidetone;
     }
-#endif
 
     out = fir(out, &outCurrentSample, outBuffer, OUTPUT_BUFFER_LEN, cwFilterTaps1, CW_FILTER_TAP_NUM_1, CW_FILTER_PRECISION_1);
 
@@ -1535,14 +1362,12 @@ void ioWritePreampOff()
 void ioWriteRXEnableHigh()
 {
     gpio_put(RX_ENABLE_GPIO, 1);
-    //sleep_ms(10);
     bMuteRX = false;
 }
 
 void ioWriteRXEnableLow()
 {
     bMuteRX = true;
-    //sleep_ms(2);
     gpio_put(RX_ENABLE_GPIO, 0);
 }
 
