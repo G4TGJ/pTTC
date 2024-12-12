@@ -552,7 +552,7 @@ static int inline hilbert( int sample, uint16_t *current, int *buffer, int bufLe
 static int inline cwPeakIIR( int x )
 {
     static int xm1, xm2, ym1, ym2;
-    int y = ((B0 * x) + (B1 * xm1) + (B2 * xm2) - (A1 * ym1) - (A2 * ym2)) / A0;
+    int y = (((B0 * x) + (B1 * xm1) + (B2 * xm2) - (A1 * ym1) - (A2 * ym2)) + (A0/2)) / A0;
 
     xm2 = xm1;
     xm1 = x;
