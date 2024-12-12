@@ -338,6 +338,10 @@ static uint8_t pwmDivider = AUDIO_DIVIDE;
 static uint32_t idleCount;
 uint32_t currentCount;
 
+// Shift the input to provide some initial gain and
+// not lose too much precision in filter calculations
+int inputShift = DEFAULT_INPUT_SHIFT;
+
 // Main and sidetone volumes (indexes into the multiplier table)
 static uint8_t volume = DEFAULT_VOLUME;
 static uint8_t sidetoneVolume = DEFAULT_SIDETONE_VOLUME;
@@ -1010,13 +1014,13 @@ static inline void feedFir( uint16_t *buf )
         // Zero pad
         int ix = buf[i*2];
         int iy = removeDC( ix, &ixm1, &iym1 );
-        firIn(iy*2, &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
-        firIn(0,  &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
+        firIn(iy<<inputShift, &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
+        firIn(0,               &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
 
         int qx = buf[i*2+1];
         int qy = removeDC( qx, &qxm1, &qym1 );
-        firIn(0,  &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
-        firIn(qy*2, &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
+        firIn(0,               &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
+        firIn(qy<<inputShift, &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
 
 #ifdef DISPLAY_MIN_MAX
         if( ix > maxIn )

@@ -330,9 +330,14 @@
 #define DEFAULT_FILTER 2
 #define DEFAULT_HILBERT_FILTER 3
 
-#define INTERMEDIATE_FREQUENCY 12000
-#define BFO_SAMPLE_RATE         8000
+#define INTERMEDIATE_FREQUENCY  12000
+#define BFO_SAMPLE_RATE          8000
 
-#define DEFAULT_MAX_MUTE_FACTOR 200
-#define MAX_MUTE_FACTOR 10000
-#define MIN_MUTE_FACTOR 1
+#define DEFAULT_MAX_MUTE_FACTOR   200
+#define MAX_MUTE_FACTOR         10000
+#define MIN_MUTE_FACTOR             1
+
+// Shift the input for some gain
+#define DEFAULT_INPUT_SHIFT 2
+#define MIN_INPUT_SHIFT     1
+#define MAX_INPUT_SHIFT     8
