@@ -215,8 +215,8 @@ int maxIn, maxOut, minIn, minOut;
 // Maximum mute factor when unmuting
 int maxMuteFactor = DEFAULT_MAX_MUTE_FACTOR;
 
-// True if binaural output
-bool bBinaural;
+// Select normal, binaural or peaked output
+enum eOutput outputMode;
 
 // Generate a sinewave for the sidetone
 static int currentSinePos;
@@ -538,6 +538,28 @@ static int inline hilbert( int sample, uint16_t *current, int *buffer, int bufLe
 
     // Extract the significant bits
     return result >> precision;
+}
+
+// CW audio peaking filter
+#define A0  32768
+#define A1 -55751
+#define A2  32619
+
+#define B0  32992
+#define B1 -55751
+#define B2  32394
+
+static int inline cwPeakIIR( int x )
+{
+    static int xm1, xm2, ym1, ym2;
+    int y = ((B0 * x) + (B1 * xm1) + (B2 * xm2) - (A1 * ym1) - (A2 * ym2)) / A0;
+
+    xm2 = xm1;
+    xm1 = x;
+    ym2 = ym1;
+    ym1 = y;
+
+    return y;
 }
 
 static bool adcDebugState1;
@@ -958,15 +980,22 @@ static inline void processAudio()
     // Apply the volume
     out = (out*volumeMultiplier[volume])/VOLUME_PRECISION;
 
-    if( bBinaural )
+    // Select binaural, peaked or normal output
+    switch( outputMode )
     {
-        // Apply LPF to left and HPF to right to get binaural effect
-        outLeft  = fir(out, &leftCurrentSample,  leftBuffer,  LEFT_BUFFER_LEN,  leftFilterTaps,  LEFT_FILTER_TAP_NUM,  LEFT_FILTER_PRECISION);
-        outRight = fir(out, &rightCurrentSample, rightBuffer, RIGHT_BUFFER_LEN, rightFilterTaps, RIGHT_FILTER_TAP_NUM, RIGHT_FILTER_PRECISION);
-    }
-    else
-    {
-        outLeft = outRight = out;
+        case BINAURAL_OUTPUT:
+            // Apply LPF to left and HPF to right to get binaural effect
+            outLeft  = fir(out, &leftCurrentSample,  leftBuffer,  LEFT_BUFFER_LEN,  leftFilterTaps,  LEFT_FILTER_TAP_NUM,  LEFT_FILTER_PRECISION);
+            outRight = fir(out, &rightCurrentSample, rightBuffer, RIGHT_BUFFER_LEN, rightFilterTaps, RIGHT_FILTER_TAP_NUM, RIGHT_FILTER_PRECISION);
+            break;
+
+        case PEAKED_OUTPUT:
+            outLeft = outRight = cwPeakIIR(out);
+            break;
+
+        default:
+            outLeft = outRight = out;
+            break;
     }
 
     if( actualSidetoneVolume > 0 )
