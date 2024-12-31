@@ -740,6 +740,85 @@ static inline int removeDC( int x, int *xm1, int *ym1 )
     return y;
 }
 
+// The gain representing unity i.e. no AGC action
+// Increasing this value will slow down the AGC but to
+// keep fast attack can increase GAIN_DECREASE_STEP
+// Also need to be aware of possible overload
+#define AGC_UNITY_GAIN 8192
+
+// The threshold above which we reduce the gain
+// Features the buffer length as the more samples we store the higher the
+// amplitude value will be.
+#define AGC_THRESHOLD (1024 * AGC_BUFFER_LEN * AGC_BUFFER_LEN)
+
+// We reduce the gain in steps. If we sample at 8ksps and reduce the gain
+// by, say, 800 one at a time that will take 100ms so decrease by more to reduce the
+// time it takes.
+// The time taken will depend on the value of AGC_UNITY_GAIN.
+#define GAIN_DECREASE_STEP 10
+
+// We store samples in order to calculate the amplitude
+static int agcBuffer[AGC_BUFFER_LEN];
+
+// Position in the buffer
+static uint16_t agcPos;
+
+// The amplitude calculated over a number of samples
+uint32_t agcAmplitude;
+
+// The gain set by AGC
+int agcGain = AGC_UNITY_GAIN;
+
+// Applies AGC to the sample
+static inline int applyAGC( int in )
+{
+    // Calculate the amplitude of the incoming sample. No need to take the square root.
+    int inAmplitude = in * in;
+
+    // Calculate the amplitude over the samples
+    agcAmplitude = agcAmplitude - agcBuffer[agcPos] + inAmplitude;
+
+    // Feed the input amplitude into the buffer
+    firIn( inAmplitude, &agcPos, agcBuffer, AGC_BUFFER_LEN);
+
+    // If the amplitude is higher than the threshold then reduce the gain
+    // Lower the gain more for even louder signals
+    // Do this gradually
+    if( agcAmplitude > 4 * AGC_THRESHOLD )
+    {
+        if( agcGain > AGC_UNITY_GAIN / 8 )
+        {
+            agcGain -= GAIN_DECREASE_STEP;
+        }
+    }
+    else if( agcAmplitude > 2 * AGC_THRESHOLD )
+    {
+        if( agcGain > AGC_UNITY_GAIN / 4 )
+        {
+            agcGain -= GAIN_DECREASE_STEP;
+        }
+    }
+    else if( agcAmplitude > AGC_THRESHOLD )
+    {
+        if( agcGain > AGC_UNITY_GAIN / 2 )
+        {
+            agcGain -= GAIN_DECREASE_STEP;
+        }
+    }
+    else
+    {
+        // Amplitude is below the threshold so increase the
+        // gain back towards unity
+        if( agcGain < AGC_UNITY_GAIN )
+        {
+            agcGain++;
+        }
+    }
+
+    // Apply the gain
+    return (in * agcGain) / AGC_UNITY_GAIN;
+}
+
 // Process the input I and Q samples and generate the output sample
 // The input and the output are done in the interrupt handler
 // but the processing is done in the main loop
@@ -977,6 +1056,10 @@ static inline void processAudio()
     out = ((int)out * muteFactor) / maxMuteFactor;
 #endif
 
+#if 1
+    // Apply AGC
+    out = applyAGC( out );
+
     // Apply the volume
     out = (out*volumeMultiplier[volume])/VOLUME_PRECISION;
 
@@ -997,6 +1080,15 @@ static inline void processAudio()
             outLeft = outRight = out;
             break;
     }
+#else
+    // Apply AGC
+    outLeft = applyAGC( out );
+    outRight = out;
+
+    // Apply the volume
+    outLeft  = (outLeft*volumeMultiplier[volume])/VOLUME_PRECISION;
+    outRight = (outRight*volumeMultiplier[volume])/VOLUME_PRECISION;
+#endif
 
     if( actualSidetoneVolume > 0 )
     {

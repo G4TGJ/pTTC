@@ -338,6 +338,9 @@
 #define MIN_MUTE_FACTOR             1
 
 // Shift the input for some gain
-#define DEFAULT_INPUT_SHIFT 2
+#define DEFAULT_INPUT_SHIFT 4
 #define MIN_INPUT_SHIFT     1
 #define MAX_INPUT_SHIFT     8
+
+// How many samples we store to calculate the amplitude for AGC
+#define AGC_BUFFER_LEN 256
