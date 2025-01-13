@@ -350,42 +350,6 @@ static bool sidetoneOn;
 
 static bool bMuteRX;
 
-void ioClearScale( void )
-{
-    maxInput = 0;
-}
-
-uint32_t ioGetScale( void )
-{
-#if 0
-    return maxInput;
-#else
-    int scale = 0;
-
-    if( maxInput > 0x200 )
-    {
-        scale = 5;
-    }
-    else if( maxInput > 0x100 )
-    {
-        scale = 4;
-    }
-    else if( maxInput > 0x80 )
-    {
-        scale = 3;
-    }
-    else if( maxInput > 0x20 )
-    {
-        scale = 2;
-    }
-    else if( maxInput > 0x1 )
-    {
-        scale = 1;
-    }
-    return scale;
-#endif
-}
-
 static inline int delay( int sample, uint16_t *current, int *buffer, int bufLen, int delay )
 {
     int result = 0;
