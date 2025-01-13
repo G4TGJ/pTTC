@@ -447,6 +447,7 @@ static int inline fir( int sample, uint16_t *current, int *buffer, int bufLen, c
 // inPos - Pointer to position in the input buffer
 // outBuf - Pointer to output buffer
 // outBufLen - Length of the output buffer (Must be power of 2)
+// outPos - Pointer to position in the output buffer
 // taps - Pointer to FIR filter taps
 // numTaps - The number of FIR taps
 // precision - Bits of precision of the FIR
