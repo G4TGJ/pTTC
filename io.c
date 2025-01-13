@@ -331,8 +331,6 @@ int iqGain = DEFAULT_IQ_GAIN;
 bool applyGains;
 bool adjustPhase;
 
-volatile uint32_t maxInput;
-
 static uint8_t pwmDivider = AUDIO_DIVIDE;
 
 static uint32_t idleCount;
@@ -391,9 +389,7 @@ static inline int firOut( uint16_t current, int *buffer, int bufLen, const int *
     }
 
     // Extract the significant bits
-    //return result  / 32768; //>> precision;
-    return (result + 16384) / 32768; //>> precision;
-    //return (result + 32768) / 65536;
+    return (result + 16384) / 32768;
 }
 
 static int inline fir( int sample, uint16_t *current, int *buffer, int bufLen, const int *taps, int numTaps, int precision )
@@ -494,7 +490,6 @@ static int inline hilbert( int sample, uint16_t *current, int *buffer, int bufLe
 
     // Calculate the result from the FIR filter
     index = *current;
-//    for( tap = numTaps-1 ; tap >= 0 ; tap-- )
     for( tap = 0 ; tap < numTaps ; tap++ )
     {
         index = (index-1) & (bufLen-1);
@@ -802,7 +797,7 @@ static inline void processAudio()
     if( applyRoofingFilter )
     {
         setAdcDebug2();
-        // Shift the frequency down 8kHz
+        // Shift the frequency down by the IF
         for( int p = 0 ; p < INPUT_SIZE ; p++ )
         {
             // Get the input buffer positions allowing for buffer wrap
@@ -871,33 +866,11 @@ static inline void processAudio()
     {
         case sdrIPQ:
         case sdrIMQ:
-#if 1
             // Apply the BFO to get the CW tone where we want it
             complexMixer( &outI, &outQ, &ncoBFO );
 
             // Only need I now
             out = outI;
-#else
-            // Apply the hilbert filter to I and delay Q to match
-            if( currentHilbertFilter == 0 )
-            {
-                outI = inI;
-                outQ = inQ;
-            }
-            else
-            {
-                outI = hilbert(inI, &hilbertCurrentSample, hilbertBuffer, HILBERT_FILTER_BUFFER_LEN, hilbertFilters[currentHilbertFilter].taps, hilbertFilters[currentHilbertFilter].numTaps, hilbertFilters[currentHilbertFilter].precision);
-                outQ = delay(inQ, &delayCurrentSample, delayBuffer, HILBERT_FILTER_BUFFER_LEN, (hilbertFilters[currentHilbertFilter].numTaps-1)/2);
-            }
-            if( outputSource == sdrIMQ )
-            {
-                out = (outI - outQ) / 2;
-            }
-            else
-            {
-                out = (outI + outQ) / 2;
-            }
-#endif
             break;
         case sdrI:
             out = inI;
@@ -941,7 +914,6 @@ static inline void processAudio()
             break;
     }
 
-#if 1
     static bool bWasMuted;
 
     // Mute the RX if required
@@ -1019,9 +991,7 @@ static inline void processAudio()
         }
     }
     out = ((int)out * muteFactor) / maxMuteFactor;
-#endif
 
-#if 1
     // Apply AGC
     out = applyAGC( out );
 
@@ -1045,15 +1015,6 @@ static inline void processAudio()
             outLeft = outRight = out;
             break;
     }
-#else
-    // Apply AGC
-    outLeft = applyAGC( out );
-    outRight = out;
-
-    // Apply the volume
-    outLeft  = (outLeft*volumeMultiplier[volume])/VOLUME_PRECISION;
-    outRight = (outRight*volumeMultiplier[volume])/VOLUME_PRECISION;
-#endif
 
     if( actualSidetoneVolume > 0 )
     {
@@ -1067,10 +1028,6 @@ static inline void processAudio()
     // Convert the samples for the PWM
     outPWMRight = calcPWM( outRight);
     outPWMLeft = calcPWM( outLeft);
-
-#define FACTOR 128
-    maxInput = (maxInput*(FACTOR-1) + abs(out))/FACTOR;
-//    maxInput += abs(out)*1024;
 
     // Reset the ADC and output overload flags every second
     adcOverloadResetCount++;
