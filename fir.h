@@ -1,37 +1,129 @@
 /*
-FIR filters designed with
-http://t-filter.engineerjs.com/
-*/
 
-/*
-sampling frequency: 256000 Hz
+FIR filter designed with
+http://t-filter.appspot.com
+
+sampling frequency: 96000 Hz
 
 fixed point precision: 16 bits
 
-* 0 Hz - 11000 Hz
+* 0 Hz - 4000 Hz
+  gain = 1
+  desired ripple = 5 dB
+  actual ripple = n/a
+
+* 44000 Hz - 48000 Hz
+  gain = 0
+  desired attenuation = -40 dB
+  actual attenuation = n/a
+
+*/
+
+#define DECIMATE_FACTOR_96_48 2
+
+#define DECIMATE_96_48_FILTER_TAP_NUM 5
+
+static int decimate9648FilterTaps[DECIMATE_96_48_FILTER_TAP_NUM] = 
+{
+  1947,
+  8334,
+  12751,
+  8334,
+  1947
+};
+
+/*
+
+FIR filter designed with
+http://t-filter.appspot.com
+
+sampling frequency: 48000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 4000 Hz
   gain = 1
   desired ripple = 0.1 dB
   actual ripple = n/a
 
-* 117000 Hz - 128000 Hz
+* 20000 Hz - 24000 Hz
+  gain = 0
+  desired attenuation = -80 dB
+  actual attenuation = n/a
+
+*/
+
+#define DECIMATE_FACTOR_48_24 2
+
+#define DECIMATE_48_24_FILTER_TAP_NUM 9
+
+static int decimate4824FilterTaps[DECIMATE_48_24_FILTER_TAP_NUM] = 
+{
+  -489,
+  -1262,
+  1468,
+  9422,
+  14366,
+  9422,
+  1468,
+  -1262,
+  -489
+};
+
+/*
+
+FIR filter designed with
+http://t-filter.appspot.com
+
+sampling frequency: 24000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 1000 Hz
+  gain = 1
+  desired ripple = 0.1 dB
+  actual ripple = n/a
+
+* 4000 Hz - 12000 Hz
   gain = 0
   desired attenuation = -60 dB
   actual attenuation = n/a
 
 */
 
-#define INTERPOLATE_FILTER_TAP_NUM 7
-#define INTERPOLATE_FILTER_PRECISION 15
+#define DECIMATE_FACTOR_24_8 3
 
-static int interpolateFilterTaps[INTERPOLATE_FILTER_TAP_NUM] =
+#define DECIMATE_24_08_FILTER_TAP_NUM 27
+
+static int decimate2408FilterTaps[DECIMATE_24_08_FILTER_TAP_NUM] = 
 {
-  -1051,
-  61,
-  9246,
-  16272,
-  9246,
-  61,
-  -1051
+  40,
+  80,
+  92,
+  10,
+  -203,
+  -505,
+  -740,
+  -665,
+  -48,
+  1201,
+  2926,
+  4733,
+  6109,
+  6624,
+  6109,
+  4733,
+  2926,
+  1201,
+  -48,
+  -665,
+  -740,
+  -505,
+  -203,
+  10,
+  92,
+  80,
+  40
 };
 
 #if 0
@@ -464,6 +556,8 @@ static int decimate1608FilterTaps[DECIMATE_16_08_FILTER_TAP_NUM] =
 };
 
 #else
+
+#if 0
 /*
 sampling frequency: 16000 Hz
 
@@ -526,6 +620,7 @@ static int decimate1608FilterTaps[DECIMATE_16_08_FILTER_TAP_NUM] =
   -4,
   124
 };
+#endif
 #endif
 #else
 
@@ -620,17 +715,6 @@ static int decimate168FilterTaps[DECIMATE_16_8_FILTER_TAP_NUM] =
   24
 };
 #endif
-
-// Size of all the decimate buffers
-// Must be bigger than all the filters
-// plus extra as we feed in more than one
-// sample each time
-// The worst case is the first decimate filter
-// where we feed, say, 16 samples in after each
-// ADC DMA so there needs to be enough space to
-// run all the taps over the first sample.
-#define DECIMATE_BUFFER_LEN 128
-
 
 /*
 sampling frequency: 8000 Hz
@@ -2736,6 +2820,84 @@ static int cwFilterTaps1000[CW_FILTER_TAP_NUM_1000] =
   16
 };
 
+/*
+
+FIR filter designed with
+http://t-filter.appspot.com
+
+sampling frequency: 48000 Hz
+
+fixed point precision: 16 bits
+
+* 0 Hz - 1000 Hz
+  gain = 1
+  desired ripple = 0.1 dB
+  actual ripple = n/a
+
+* 4000 Hz - 24000 Hz
+  gain = 0
+  desired attenuation = -60 dB
+  actual attenuation = n/a
+
+*/
+
+#define INTERPOLATE_FILTER_TAP_NUM 51
+
+static int interpolateFilterTaps[INTERPOLATE_FILTER_TAP_NUM] = 
+{
+  26,
+  26,
+  32,
+  31,
+  21,
+  -3,
+  -43,
+  -99,
+  -166,
+  -237,
+  -302,
+  -346,
+  -353,
+  -307,
+  -194,
+  -5,
+  264,
+  607,
+  1012,
+  1457,
+  1914,
+  2351,
+  2734,
+  3033,
+  3223,
+  3288,
+  3223,
+  3033,
+  2734,
+  2351,
+  1914,
+  1457,
+  1012,
+  607,
+  264,
+  -5,
+  -194,
+  -307,
+  -353,
+  -346,
+  -302,
+  -237,
+  -166,
+  -99,
+  -43,
+  -3,
+  21,
+  31,
+  32,
+  26,
+  26
+};
+
 // Number of filters
 #define NUM_FILTERS 5
 
@@ -2744,18 +2906,17 @@ const struct sFir
 {
   const int*        taps;
   const int         numTaps;
-  const int         precision;
   const bool        binaural;
   const char* const text;
 }
 filters[NUM_FILTERS]=
 {
-  { NULL,              0,                       0,                         false, "Off" },
+  { NULL,              0,                       false, "Off" },
 #if 1
-  { cwFilterTaps200,   CW_FILTER_TAP_NUM_200,   CW_FILTER_PRECISION_200,   false,  "200Hz" },
-  { cwFilterTaps400,   CW_FILTER_TAP_NUM_400,   CW_FILTER_PRECISION_400,   false,  "400Hz" },
-  { cwFilterTaps800,   CW_FILTER_TAP_NUM_800,   CW_FILTER_PRECISION_800,   false,  "800Hz" },
-  { cwFilterTaps1000,  CW_FILTER_TAP_NUM_1000,  CW_FILTER_PRECISION_1000,  false,  "1000Hz" },
+  { cwFilterTaps200,   CW_FILTER_TAP_NUM_200,   false,  "200Hz" },
+  { cwFilterTaps400,   CW_FILTER_TAP_NUM_400,   false,  "400Hz" },
+  { cwFilterTaps800,   CW_FILTER_TAP_NUM_800,   false,  "800Hz" },
+  { cwFilterTaps1000,  CW_FILTER_TAP_NUM_1000,  false,  "1000Hz" },
 #else
   { cwFilterTaps1,     CW_FILTER_TAP_NUM_1,     CW_FILTER_PRECISION_1,     true,  "Binaural" },
   { cwFilterTaps2,     CW_FILTER_TAP_NUM_2,     CW_FILTER_PRECISION_2,     false, "500Hz" },

@@ -68,7 +68,7 @@
 #define SI_XTAL_LOAD_CAP SI_XTAL_LOAD_8PF
 
 // I2C clock speed
-#define I2C_CLOCK_RATE 400000
+#define I2C_CLOCK_RATE 100000
 
 // Transmit and receive clocks. Direct conversion receive uses 2 clocks (0 and 1) for quadrature.
 // Superhet uses one clock for the BFO. In this case use clocks 0 and 2 so that BFO can be set
@@ -166,7 +166,7 @@
 // Minimum and maximum volume levels
 #define MIN_VOLUME 0
 #define MAX_VOLUME 40
-#define DEFAULT_VOLUME 11
+#define DEFAULT_VOLUME 20
 #define DEFAULT_SIDETONE_VOLUME 8
 #define MIN_SIDETONE_VOLUME MIN_VOLUME
 #define MAX_SIDETONE_VOLUME MAX_VOLUME
@@ -261,10 +261,10 @@
 
 // Definitions of GPIOs in order for easy reference
 
-#define AUDIO_PWM_L_GPIO        0
-#define PUSHBUTTON_2_GPIO       1
-#define AUDIO_PWM_R_GPIO        2
-#define PUSHBUTTON_3_GPIO       3
+#define I2S_DOUT_GPIO           0
+#define I2S_DIN_GPIO            1
+#define I2S_BCLK_GPIO           2
+#define I2S_LRCLK_GPIO          3  // Must be next after BCLK
 
 // I2C SDA                      4
 // I2C SCL                      5
@@ -297,8 +297,8 @@
 // Pico VBUS monitor           24
 // Pico LED                    25
 
-#define AUDIO_I_GPIO           26
-#define AUDIO_Q_GPIO           27
+#define PUSHBUTTON_2_GPIO      26
+#define PUSHBUTTON_3_GPIO      27
 
 #define PREAMP_ENABLE_GPIO     28
 
@@ -306,26 +306,13 @@
 // checking not spending too long processing
 // audio
 // They are otherwise used for buttons so they will
-// not be available if debug pins enabled
-//#define ADC_DEBUG1_OUTPUT_GPIO  1
-//#define ADC_DEBUG2_OUTPUT_GPIO  3
+// not be available if debug pins are enabled
+//#define ADC_DEBUG1_OUTPUT_GPIO  19
+//#define ADC_DEBUG2_OUTPUT_GPIO  25
 
-#define NUM_ADC 2
-
-// ADC clock is 48MHz. 
 // Ultimate sample rate is 8K but we are overclocking and
 // then decimating.
-#define ADC_SAMPLE_RATE 128000
-#define ADC_CLOCK 48000000
-#define ADC_CLOCK_DIVIDER (ADC_CLOCK/ADC_SAMPLE_RATE/NUM_ADC - 1)
-
-#define AUDIO_I_ADC    0
-#define AUDIO_Q_ADC    1
-
-#define AUDIO_DIVIDE 1
-
-#define AUDIO_WRAP 4094
-//#define AUDIO_WRAP 254
+#define CODEC_SAMPLE_RATE 48000
 
 #define DEFAULT_FILTER 2
 #define DEFAULT_HILBERT_FILTER 3
@@ -338,9 +325,22 @@
 #define MIN_MUTE_FACTOR             1
 
 // Shift the input for some gain
-#define DEFAULT_INPUT_SHIFT 4
-#define MIN_INPUT_SHIFT     1
+#define DEFAULT_INPUT_SHIFT 0
+#define MIN_INPUT_SHIFT     0
 #define MAX_INPUT_SHIFT     8
 
 // How many samples we store to calculate the amplitude for AGC
 #define AGC_BUFFER_LEN 256
+
+// Default ADC volume settings
+#define DEFAULT_LEFT_ADC_VOLUME 0xC3
+#define DEFAULT_RIGHT_ADC_VOLUME 0xC3
+
+#define MIN_ADC_VOLUME 0x00
+#define MAX_ADC_VOLUME 0xFF
+
+//#define INTERPOLATE_96K
+
+// The I and Q channels from the codec may not be exactly in sync
+// so add a delay to the I channel
+#define DEFAULT_IQ_PHASING 1

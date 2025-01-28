@@ -21,6 +21,8 @@
 #include "fir.h"
 #include "hilbert.h"
 #include "sdr.h"
+#include "i2s.h"
+#include "WM8960.h"
 
 // Map between relay number and the output GPIO
 static const uint8_t  relayGpio[NUM_RELAYS] =
@@ -176,23 +178,26 @@ static const int sine700[NUM_SINE700] =
 -535,
 };
 
-#define ADC_BUFFER_SIZE 32
-#define INPUT_SIZE ADC_BUFFER_SIZE
+static const i2s_config i2sConfig = {CODEC_SAMPLE_RATE,     // Sample rate
+                                                   256,     // System clock multiplier - not used
+                                                    32,     // Word length
+                                                     0,     // System clock GPIO - not used
+                                         I2S_DOUT_GPIO,     // DOUT GPIO
+                                          I2S_DIN_GPIO,     // DIN GPIO
+                                         I2S_BCLK_GPIO,     // Bit clock GPIO (LR clock is on next GPIO)
+                                                 false      // false so don't generate system clock
+                                    };
 
-static int captureDma;
-static dma_channel_config captureCfg;
+static __attribute__((aligned(8))) pio_i2s i2s;
 
-static int adcDma0;
-static int adcDma1;
-static dma_channel_config dmaCfg0;
-static dma_channel_config dmaCfg1;
-static uint16_t adcBuffer0[ADC_BUFFER_SIZE];
-static uint16_t adcBuffer1[ADC_BUFFER_SIZE];
+// I2S samples are in the top 16 bits of 32 bit word so need to shift
+#define I2S_SHIFT 16
 
-// Keep track of whether the input has overloaded
-// Unsigned so overloads if goes near zero or max
-#define ADC_OVERLOAD_LOW 10
-#define ADC_OVERLOAD_HIGH 4080
+// The lowest and highest samples before deciding the input is overloaded
+#define ADC_OVERLOAD_LOW  -32700
+#define ADC_OVERLOAD_HIGH  32700
+
+#define CW_BUFFER_LEN 128
 
 // Set true if overload detected
 bool adcOverload;
@@ -204,8 +209,11 @@ bool adcOverload;
 int outOverload;
 
 // Reset the overload flag every second
-#define ADC_OVERLOAD_RESET_COUNT 8000
+#define ADC_OVERLOAD_RESET_COUNT 1000
 static int adcOverloadResetCount;
+
+int minValueI, maxValueI;
+int minValueQ, maxValueQ;
 
 #ifdef DISPLAY_MIN_MAX
 // Maximum input and output
@@ -246,16 +254,17 @@ static void gpioSetInputWithPullup( uint16_t gpio )
     gpio_pull_up(gpio);
 }
 
-// The ADC reads between 0 and 4095 but the DSP needs it to be signed
-// so subract this from samples and add back before writing to PWM
-#define ADC_OFFSET 2048
+#ifdef INTERPOLATE_96K
+#define INPUT_INTERPOLATE_FACTOR DECIMATE_FACTOR_96_48
+#else
+#define INPUT_INTERPOLATE_FACTOR 1
+#endif
 
-#define MAX_PWM_OUT 4095
+#define INPUT_BUFFER_LEN (AUDIO_BUFFER_FRAMES * INPUT_INTERPOLATE_FACTOR)
 
-// PWM slices for sidetone and audio outputs
-static uint16_t sidetone_slice_num;
-static uint16_t audio_l_slice_num;
-static uint16_t audio_r_slice_num;
+#define BUFFER_LEN 128
+
+static uint16_t ifShiftPos;
 
 static int iOutBuffer[OUTPUT_BUFFER_LEN];
 static int qOutBuffer[OUTPUT_BUFFER_LEN];
@@ -263,7 +272,6 @@ static int hilbertBuffer[HILBERT_FILTER_BUFFER_LEN];
 static int delayBuffer[HILBERT_FILTER_BUFFER_LEN];
 static int leftBuffer[LEFT_BUFFER_LEN];
 static int rightBuffer[RIGHT_BUFFER_LEN];
-static int outBuffer[OUTPUT_BUFFER_LEN];
 
 static uint16_t iOutCurrentSample;
 static uint16_t qOutCurrentSample;
@@ -271,49 +279,42 @@ static uint16_t hilbertCurrentSample;
 static uint16_t delayCurrentSample;
 static uint16_t leftCurrentSample;
 static uint16_t rightCurrentSample;
-static uint16_t outCurrentSample;
 
-// Input and output positions for 128/64k filter
-// Input and output are tracked separately as the
-// input is filled at the start of the interrupt handler
-static uint16_t iInPos, qInPos;
+// The I and Q channels from the codec may not be exactly in sync
+// so add a delay to the I channel
+static uint16_t iInPos = DEFAULT_IQ_PHASING;
+static uint16_t qInPos;
 static uint16_t iIn12864, qIn12864;
 static uint16_t iOut12864, qOut12864;
-
-// Positions for the other filters
-// Input and output track each other
-static uint16_t iPos6432, qPos6432;
-static uint16_t iPos3216, qPos3216;
-static uint16_t iPos1608, qPos1608;
 
 static uint16_t iInInterpolate, iOutInterpolate;
 static uint16_t qInInterpolate, qOutInterpolate;
 
-static uint16_t iIn6432, iOut6432;
-static uint16_t qIn6432, qOut6432;
+static uint16_t outPos;
 
-static uint16_t iIn3216, iOut3216;
-static uint16_t qIn3216, qOut3216;
+static uint16_t iInPos9648, iOutPos9648, iInPos4824, iOutPos4824, iInPos2408, iOutPos2408;
+static int iBuffer96k[BUFFER_LEN];
+static int iBuffer48k[BUFFER_LEN];
+static int iBuffer24k[BUFFER_LEN];
+static int iBuffer8k[BUFFER_LEN];
 
-static uint16_t iIn1608, iOut1608;
-static uint16_t qIn1608, qOut1608;
+static uint16_t qInPos9648, qOutPos9648, qInPos4824, qOutPos4824, qInPos2408, qOutPos2408;
+static int qBuffer96k[BUFFER_LEN];
+static int qBuffer48k[BUFFER_LEN];
+static int qBuffer24k[BUFFER_LEN];
+static int qBuffer8k[BUFFER_LEN];
 
-static uint16_t iOut08, qOut08;
+static uint16_t outLRPos;
+static int leftOutputBuffer[BUFFER_LEN];
+static int rightOutputBuffer[BUFFER_LEN];
 
-static int         iInputBuffer[DECIMATE_BUFFER_LEN];
-static int         qInputBuffer[DECIMATE_BUFFER_LEN];
+static uint16_t leftOutputPos;
+static uint16_t rightOutputPos;
+static int leftInterpolateBuffer[BUFFER_LEN];
+static int rightInterpolateBuffer[BUFFER_LEN];
 
-static int    iAccumulateBuffer[DECIMATE_BUFFER_LEN];
-static int    qAccumulateBuffer[DECIMATE_BUFFER_LEN];
-
-static int iDecimate12864Buffer[DECIMATE_BUFFER_LEN];
-static int qDecimate12864Buffer[DECIMATE_BUFFER_LEN];
-static int  iDecimate6432Buffer[DECIMATE_BUFFER_LEN];
-static int  qDecimate6432Buffer[DECIMATE_BUFFER_LEN];
-static int  iDecimate3216Buffer[DECIMATE_BUFFER_LEN];
-static int  qDecimate3216Buffer[DECIMATE_BUFFER_LEN];
-static int  iDecimate1608Buffer[DECIMATE_BUFFER_LEN];
-static int  qDecimate1608Buffer[DECIMATE_BUFFER_LEN];
+static int cwBuffer[CW_BUFFER_LEN];
+static uint16_t cwCurrentSample;
 
 // The following can be configured in menus so are global
 enum sdrSource outputSource;
@@ -330,8 +331,6 @@ int iqGain = DEFAULT_IQ_GAIN;
 
 bool applyGains;
 bool adjustPhase;
-
-static uint8_t pwmDivider = AUDIO_DIVIDE;
 
 static uint32_t idleCount;
 uint32_t currentCount;
@@ -374,28 +373,28 @@ static inline void firIn( int sample, uint16_t *current, int *buffer, int bufLen
 }
 
 // bufLen must be a power of 2
-static inline int firOut( uint16_t current, int *buffer, int bufLen, const int *taps, int numTaps, int precision )
+static inline int firOut( uint16_t current, int *buffer, int bufLen, const int *taps, int numTaps )
 {
     int tap;
     uint16_t index;
-    int32_t result = 0;
+    int result = 0;
 
     // Calculate the result from the FIR filter
     index = current;
     for( tap = 0 ; tap < numTaps ; tap++ )
     {
         index = (index-1) & (bufLen-1);
-        result += ((int32_t) buffer[index]) * taps[tap];
+        result += ((int) buffer[index]) * taps[tap];
     }
 
     // Extract the significant bits
     return (result + 16384) / 32768;
 }
 
-static int inline fir( int sample, uint16_t *current, int *buffer, int bufLen, const int *taps, int numTaps, int precision )
+static int inline fir( int sample, uint16_t *current, int *buffer, int bufLen, const int *taps, int numTaps )
 {
     firIn( sample,  current, buffer, bufLen );
-    return firOut( *current, buffer, bufLen, taps, numTaps, precision );
+    return firOut( *current, buffer, bufLen, taps, numTaps );
 }
 
 // Filter and decimate
@@ -413,12 +412,12 @@ static int inline fir( int sample, uint16_t *current, int *buffer, int bufLen, c
 // precision - Bits of precision of the FIR
 //
 // count/factor must be an integer
-static inline void decimate( int factor, int count, int *inBuf, int inBufLen, uint16_t *inPos, int *outBuf, int outBufLen, uint16_t *outPos, const int *taps, int numTaps, int precision )
+static inline void decimate( int factor, int count, int *inBuf, int inBufLen, uint16_t *inPos, int *outBuf, int outBufLen, uint16_t *outPos, const int *taps, int numTaps )
 {
     // Process each decimation
     for( int i = 0 ; i < count/factor ; i++ )
     {
-        int out = firOut( *inPos, inBuf, inBufLen, taps, numTaps, precision );
+        int out = firOut( *inPos, inBuf, inBufLen, taps, numTaps );
         firIn( out, outPos, outBuf, outBufLen );
 
         // Move the input pointer past the decimation factor
@@ -483,7 +482,7 @@ static int inline hilbert( int sample, uint16_t *current, int *buffer, int bufLe
 {
     int tap;
     uint16_t index;
-    int32_t result = 0;
+    int result = 0;
 
     // Store sample in the FIR buffer
     firIn( sample, current, buffer, bufLen );
@@ -493,7 +492,7 @@ static int inline hilbert( int sample, uint16_t *current, int *buffer, int bufLe
     for( tap = 0 ; tap < numTaps ; tap++ )
     {
         index = (index-1) & (bufLen-1);
-        result += ((int32_t) buffer[index]) * taps[tap];
+        result += ((int) buffer[index]) * taps[tap];
     }
 
     // Extract the significant bits
@@ -574,30 +573,83 @@ static inline void clearAdcDebug2()
 #endif
 }
 
-// The next outputs to send to the PWM
-static int outPWMLeft;
-static int outPWMRight;
-
-// Calculate the output PWM value
-static inline int calcPWM( int out )
+// Shift the frequency by 1/4 of the sample rate
+static inline void shiftFrequency1( int *pI, int *pQ )
 {
-    // Convert to unsigned
-    int outPWM = out + ADC_OFFSET;
-
-    // Don't let the PWM output go too low or too high
-    if( outPWM < 0 )
+    int origI;
+    static int shiftPos;
+    switch( shiftPos )
     {
-        outOverload = -1;
-        outPWM = 0;
-    }
-    else if( outPWM > MAX_PWM_OUT )
-    {
-        outOverload = 1;
-        outPWM = MAX_PWM_OUT;
-    }
+        case 0:
+        default:
+            // I=I Q=Q
+            shiftPos = 1;
+            break;
 
-    return outPWM;
+        case 1:
+            origI = *pI;
+            *pI = -*pQ;
+            *pQ = origI;
+            shiftPos = 2;
+            break;
+
+        case 2:
+            *pI = -*pI;
+            *pQ = -*pQ;
+            shiftPos = 3;
+            break;        
+
+        case 3:
+            origI = *pI;
+            *pI = *pQ;
+            *pQ = -origI;
+            shiftPos = 0;
+            break;
+    }
 }
+
+static inline void shiftFrequency2( int *pI, int *pQ )
+{
+    int origI;
+    static int shiftPos;
+    switch( shiftPos )
+    {
+        case 0:
+        default:
+            // I=I Q=Q
+            shiftPos = 1;
+            break;
+
+        case 1:
+            origI = *pI;
+            *pI = *pQ;
+            *pQ = -origI;
+            shiftPos = 2;
+            break;
+
+        case 2:
+            *pI = -*pI;
+            *pQ = -*pQ;
+            shiftPos = 3;
+            break;        
+
+        case 3:
+            origI = *pI;
+            *pI = -*pQ;
+            *pQ = origI;
+            shiftPos = 0;
+            break;
+    }
+}
+
+#if 1
+#define shiftFrequencyDown shiftFrequency1
+#define shiftFrequencyUp   shiftFrequency2
+#else
+// Correct
+#define shiftFrequencyDown shiftFrequency2
+#define shiftFrequencyUp   shiftFrequency1
+#endif
 
 // Numerically controlled oscillator
 
@@ -622,8 +674,10 @@ struct sNCO
     uint16_t phase;
 };
 
+#ifdef INTERPOLATE_96K        
 // Oscillator for the IF
 static struct sNCO ncoIF;
+#endif
 
 // Oscillator for the BFO
 static struct sNCO ncoBFO;
@@ -674,16 +728,16 @@ static void ncoInit( void )
     }
 }
 
-static inline void complexMixer( int *pI, int *pQ, struct sNCO *ncoIF )
+static inline void complexMixer( int *pI, int *pQ, struct sNCO *nco )
 {
     // Get the next quadrature oscillator value
-    int iOsc = ncoOscI(ncoIF);
-    int qOsc = ncoOscQ(ncoIF);
-    ncoOscIncrementPhase(ncoIF);
+    int iOsc = ncoOscI(nco);
+    int qOsc = ncoOscQ(nco);
+    ncoOscIncrementPhase(nco);
 
     // Multiply to get the frequency shift
-    int i = (((*pI * iOsc) - (*pQ * qOsc))  + 16384) / 32768; // / NCO_SCALE;
-    int q = (((*pI * qOsc) + (*pQ * iOsc))  + 16384) / 32768; // / NCO_SCALE;
+    int i = (((*pI * iOsc) - (*pQ * qOsc)) + (NCO_SCALE/2)) / NCO_SCALE;
+    int q = (((*pI * qOsc) + (*pQ * iOsc)) + (NCO_SCALE/2)) / NCO_SCALE;
 
     // Store the new values
     *pI = i;
@@ -779,63 +833,10 @@ static inline int applyAGC( int in )
     return (in * agcGain) / AGC_UNITY_GAIN;
 }
 
-// Process the input I and Q samples and generate the output sample
-// The input and the output are done in the interrupt handler
-// but the processing is done in the main loop
-static inline void processAudio()
+// Process a pair of I and Q samples and create the left and right outputs
+static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
 {
-    int out, outI, outQ, inI, inQ, outLeft, outRight, i32, q32, i64, q64;
-    static int aveI, aveQ;
-
-    // Used while removing DC
-    static int iXm1, iYm1;
-    static int qXm1, qYm1;
-
-    // The volume, either normal or sidetone, to apply to the output
-    int vol;
-
-    if( applyRoofingFilter )
-    {
-        setAdcDebug2();
-        // Shift the frequency down by the IF
-        for( int p = 0 ; p < INPUT_SIZE ; p++ )
-        {
-            // Get the input buffer positions allowing for buffer wrap
-            int iPos = (iIn12864+p)&(DECIMATE_BUFFER_LEN-1);
-            int qPos = (qIn12864+p)&(DECIMATE_BUFFER_LEN-1);
-            
-            complexMixer( &iInputBuffer[iPos], &qInputBuffer[qPos], &ncoIF );
-        }
-        clearAdcDebug2();
-
-#define CIC_ORDER 3
-#define CIC_DECIMATION_FACTOR 16
-
-// Number of bits to shift the CIC result right
-// 2^CIC_GAIN_BITS is the gain of the filter at DC
-// Equal to log2(CIC_DECIMATION_FACTOR^CIC_ORDER) = CIC_ORDER*log2(CIC_DECIMATION_FACTOR)
-// Subtract 1 to allow for interpolation with zero
-// Assuming 12 bit samples and 32 bit words maximum is 20 bits before overflow
-#define CIC_GAIN_BITS 11
-
-        static int iCombOutput[CIC_ORDER];
-        static int qCombOutput[CIC_ORDER];
-        static int iCombPreviousInput[CIC_ORDER];
-        static int qCombPreviousInput[CIC_ORDER];
-
-        decimateCIC( CIC_DECIMATION_FACTOR, CIC_ORDER, CIC_GAIN_BITS, INPUT_SIZE, iInputBuffer, DECIMATE_BUFFER_LEN, &iIn12864, iAccumulateBuffer, iCombOutput, iCombPreviousInput, iDecimate1608Buffer, DECIMATE_BUFFER_LEN, &iOut12864 );
-        decimateCIC( CIC_DECIMATION_FACTOR, CIC_ORDER, CIC_GAIN_BITS, INPUT_SIZE, qInputBuffer, DECIMATE_BUFFER_LEN, &qIn12864, qAccumulateBuffer, qCombOutput, qCombPreviousInput, qDecimate1608Buffer, DECIMATE_BUFFER_LEN, &qOut12864 );
-
-        // Filter and decimate from 16ksps to 8ksps
-        // This leaves us with a single pair of I and Q
-        decimate( 2, INPUT_SIZE/CIC_DECIMATION_FACTOR, iDecimate1608Buffer, DECIMATE_BUFFER_LEN, &iIn1608, &inI, 1, &iOut08, decimate1608FilterTaps, DECIMATE_16_08_FILTER_TAP_NUM, DECIMATE_16_08_FILTER_PRECISION );
-        decimate( 2, INPUT_SIZE/CIC_DECIMATION_FACTOR, qDecimate1608Buffer, DECIMATE_BUFFER_LEN, &qIn1608, &inQ, 1, &qOut08, decimate1608FilterTaps, DECIMATE_16_08_FILTER_TAP_NUM, DECIMATE_16_08_FILTER_PRECISION );
-    }
-    else
-    {
-        inI = iInputBuffer[iInPos];
-        inQ = qInputBuffer[qInPos];
-    }
+    int out, outI, outQ;
 
     // Apply I and Q gains
     if( applyGains )
@@ -853,8 +854,8 @@ static inline void processAudio()
     // Apply the CW filter
     if( currentFilter >= 0 && currentFilter < NUM_FILTERS && filters[currentFilter].taps != NULL)
     {
-        outI = fir(inI, &iOutCurrentSample, iOutBuffer, OUTPUT_BUFFER_LEN, filters[currentFilter].taps, filters[currentFilter].numTaps, filters[currentFilter].precision);
-        outQ = fir(inQ, &qOutCurrentSample, qOutBuffer, OUTPUT_BUFFER_LEN, filters[currentFilter].taps, filters[currentFilter].numTaps, filters[currentFilter].precision);
+        outI = fir(inI, &iOutCurrentSample, iOutBuffer, OUTPUT_BUFFER_LEN, filters[currentFilter].taps, filters[currentFilter].numTaps);
+        outQ = fir(inQ, &qOutCurrentSample, qOutBuffer, OUTPUT_BUFFER_LEN, filters[currentFilter].taps, filters[currentFilter].numTaps);
     }
     else
     {
@@ -873,10 +874,10 @@ static inline void processAudio()
             out = outI;
             break;
         case sdrI:
-            out = inI;
+            out = outI;
             break;
         case sdrQ:
-            out = inQ;
+            out = outQ;
             break;
         case sdrIDelayed:
             out = delay(inI, &delayCurrentSample, delayBuffer, HILBERT_FILTER_BUFFER_LEN, (hilbertFilters[currentHilbertFilter].numTaps-1)/2);
@@ -993,7 +994,7 @@ static inline void processAudio()
     out = ((int)out * muteFactor) / maxMuteFactor;
 
     // Apply AGC
-    out = applyAGC( out );
+    //out = applyAGC( out );
 
     // Apply the volume
     out = (out*volumeMultiplier[volume])/VOLUME_PRECISION;
@@ -1003,135 +1004,288 @@ static inline void processAudio()
     {
         case BINAURAL_OUTPUT:
             // Apply LPF to left and HPF to right to get binaural effect
-            outLeft  = fir(out, &leftCurrentSample,  leftBuffer,  LEFT_BUFFER_LEN,  leftFilterTaps,  LEFT_FILTER_TAP_NUM,  LEFT_FILTER_PRECISION);
-            outRight = fir(out, &rightCurrentSample, rightBuffer, RIGHT_BUFFER_LEN, rightFilterTaps, RIGHT_FILTER_TAP_NUM, RIGHT_FILTER_PRECISION);
+            *outLeft  = fir(out, &leftCurrentSample,  leftBuffer,  LEFT_BUFFER_LEN,  leftFilterTaps,  LEFT_FILTER_TAP_NUM);
+            *outRight = fir(out, &rightCurrentSample, rightBuffer, RIGHT_BUFFER_LEN, rightFilterTaps, RIGHT_FILTER_TAP_NUM);
             break;
 
         case PEAKED_OUTPUT:
-            outLeft = outRight = cwPeakIIR(out);
+            *outLeft = *outRight = cwPeakIIR(out);
             break;
 
         default:
-            outLeft = outRight = out;
+            *outLeft = *outRight = out;
             break;
     }
 
     if( actualSidetoneVolume > 0 )
     {
         int sidetone = (sinewave()*volumeMultiplier[actualSidetoneVolume])/VOLUME_PRECISION;
-        outLeft += sidetone;
-        outRight += sidetone;
+        *outLeft += sidetone;
+        *outRight += sidetone;
     }
 
-    //out = fir(out, &outCurrentSample, outBuffer, OUTPUT_BUFFER_LEN, cwFilterTaps1, CW_FILTER_TAP_NUM_1, CW_FILTER_PRECISION_1);
+    if( *outLeft < ADC_OVERLOAD_LOW || *outLeft > ADC_OVERLOAD_HIGH || *outRight < ADC_OVERLOAD_LOW || *outRight > ADC_OVERLOAD_HIGH )
+    {
+        outOverload = true;
+    }
+}
 
-    // Convert the samples for the PWM
-    outPWMRight = calcPWM( outRight);
-    outPWMLeft = calcPWM( outLeft);
+// Shift the incoming signal by the IF
+static inline void shiftIF()
+{
+    // Shift the frequency down by the IF
+    for( int p = 0 ; p < INPUT_BUFFER_LEN ; p++ )
+    {
+#ifdef INTERPOLATE_96K        
+        complexMixer( &iBuffer96k[ifShiftPos], &qBuffer96k[ifShiftPos], &ncoIF );
+#else
+        if( ifBelow )
+        {
+            shiftFrequencyDown( &iBuffer48k[ifShiftPos], &qBuffer48k[ifShiftPos] );
+        }
+        else
+        {
+            shiftFrequencyUp( &iBuffer48k[ifShiftPos], &qBuffer48k[ifShiftPos] );
+        }
+#endif
+        ifShiftPos = (ifShiftPos+1) & (BUFFER_LEN-1);
+    }
+}
+
+// Process the incoming buffers of I and Q samples and create the outgoing
+// left and right channel buffers
+static inline void processAudio()
+{
+    int i;
+
+    if( applyRoofingFilter )
+    {
+        // Shift the incoming signal by the IF
+        shiftIF();
+
+#ifdef INTERPOLATE_96K        
+        // Filter and decimate from 96ksps to 48ksps
+        decimate( DECIMATE_FACTOR_96_48, AUDIO_BUFFER_FRAMES * DECIMATE_FACTOR_96_48, 
+                iBuffer96k, BUFFER_LEN, &iInPos9648, 
+                iBuffer48k, BUFFER_LEN, &iOutPos9648, 
+                decimate9648FilterTaps, DECIMATE_96_48_FILTER_TAP_NUM );
+        decimate( DECIMATE_FACTOR_96_48, AUDIO_BUFFER_FRAMES * DECIMATE_FACTOR_96_48, 
+                qBuffer96k, BUFFER_LEN, &qInPos9648, 
+                qBuffer48k, BUFFER_LEN, &qOutPos9648, 
+                decimate9648FilterTaps, DECIMATE_96_48_FILTER_TAP_NUM );
+#endif
+        // Filter and decimate from 48ksps to 24ksps
+        decimate( DECIMATE_FACTOR_48_24, AUDIO_BUFFER_FRAMES, 
+                iBuffer48k, BUFFER_LEN, &iInPos4824, 
+                iBuffer24k, BUFFER_LEN, &iOutPos4824, 
+                decimate4824FilterTaps, DECIMATE_48_24_FILTER_TAP_NUM );
+        decimate( DECIMATE_FACTOR_48_24, AUDIO_BUFFER_FRAMES, 
+                qBuffer48k, BUFFER_LEN, &qInPos4824, 
+                qBuffer24k, BUFFER_LEN, &qOutPos4824, 
+                decimate4824FilterTaps, DECIMATE_48_24_FILTER_TAP_NUM );
+
+        // Filter and decimate from 24ksps to 8ksps
+        decimate( DECIMATE_FACTOR_24_8, AUDIO_BUFFER_FRAMES / DECIMATE_FACTOR_48_24, 
+                iBuffer24k, BUFFER_LEN, &iInPos2408, 
+                iBuffer8k,  BUFFER_LEN, &iOutPos2408, 
+                decimate2408FilterTaps, DECIMATE_24_08_FILTER_TAP_NUM );
+        decimate( DECIMATE_FACTOR_24_8, AUDIO_BUFFER_FRAMES / DECIMATE_FACTOR_48_24, 
+                qBuffer24k, BUFFER_LEN, &qInPos2408, 
+                qBuffer8k,  BUFFER_LEN, &qOutPos2408, 
+                decimate2408FilterTaps, DECIMATE_24_08_FILTER_TAP_NUM );
+ 
+        // Process the decimated I and Q to produce left and right output
+        for (i = 0 ; i < AUDIO_BUFFER_FRAMES / DECIMATE_FACTOR_48_24 / DECIMATE_FACTOR_24_8 ; i++)
+        {
+            processIQ( iBuffer8k[outPos], qBuffer8k[outPos], &leftOutputBuffer[outPos], &rightOutputBuffer[outPos] );
+            outPos = (outPos+1) & (BUFFER_LEN-1);
+        }
+    }
+    else
+    {
+        // Decimate by copying every nth sample but no filtering
+        for (i = 0 ; i < AUDIO_BUFFER_FRAMES ; i++)
+        {
+            if( !(i % (DECIMATE_FACTOR_48_24 * DECIMATE_FACTOR_24_8)) )
+            {
+                int iSig = iBuffer96k[iInPos9648];
+                int qSig = qBuffer96k[qInPos9648];
+
+                switch( outputSource )
+                {
+                    case sdrIPQ:
+                        iSig = qSig = (iSig + qSig);
+                        break;
+                    case sdrIMQ:
+                        iSig = qSig = (iSig - qSig);
+                        break;
+                    case sdrI:
+                        qSig = iSig;
+                        break;
+                    case sdrQ:
+                        iSig = qSig;
+                        break;
+                    default:
+                        break;
+                }
+
+                leftOutputBuffer[outPos] = iSig;
+                rightOutputBuffer[outPos] = qSig;
+
+                iInPos9648 = (iInPos9648+1) & (BUFFER_LEN-1);
+                qInPos9648 = (qInPos9648+1) & (BUFFER_LEN-1);
+                outPos = (outPos+1) & (BUFFER_LEN-1);
+            }
+        }
+    }
 
     // Reset the ADC and output overload flags every second
     adcOverloadResetCount++;
     if( adcOverloadResetCount > ADC_OVERLOAD_RESET_COUNT )
     {
+        clearAdcDebug2();
         adcOverload = false;
         adcOverloadResetCount = 0;
         outOverload = 0;
-#ifdef DISPLAY_MIN_MAX
-        maxOut = 0;
-        maxIn = 0;
-        minOut = minIn = 0xffff;
-#endif
     }
 }
 
-// Feed from a DMA buffer into the FIR
-static inline void feedFir( uint16_t *buf )
+volatile int changeIQPhasing, iqPhasing;
+
+static inline void process_audio(const int* input, int* output)
 {
+    int i;
     static int ixm1, iym1;
     static int qxm1, qym1;
+    int o = 0;
+    int32_t outLeft = 0;
+    int32_t outRight = 0;
 
-    for( int i = 0 ; i < ADC_BUFFER_SIZE/2 ; i++ )
+    if( changeIQPhasing )
     {
-        // Samples alternate between I and Q in DMA buffer
+        iInPos = (iInPos + changeIQPhasing) & (BUFFER_LEN-1);
+        changeIQPhasing = 0;
+    }
+    iqPhasing = (iInPos - qInPos);
+
+    for( i = 0 ; i < STEREO_BUFFER_SIZE ; i += 2 )
+    {
         // Remove any DC
-        // Zero pad
-        int ix = buf[i*2];
-        int iy = removeDC( ix, &ixm1, &iym1 );
-        firIn(iy<<inputShift, &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
-        firIn(0,               &iInPos, iInputBuffer, DECIMATE_BUFFER_LEN);
-
-        int qx = buf[i*2+1];
-        int qy = removeDC( qx, &qxm1, &qym1 );
-        firIn(0,               &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
-        firIn(qy<<inputShift, &qInPos, qInputBuffer, DECIMATE_BUFFER_LEN);
-
-#ifdef DISPLAY_MIN_MAX
-        if( ix > maxIn )
-        {
-            maxIn = ix;
-        }
-
-        if( ix < minIn )
-        {
-            minIn = ix;
-        }
+        int ix = input[i] >> (I2S_SHIFT - inputShift);
+        ix = removeDC( ix, &ixm1, &iym1 );
+#ifdef INTERPOLATE_96K        
+        firIn(ix, &iInPos, iBuffer96k, BUFFER_LEN);
+        firIn(0,  &iInPos, iBuffer96k, BUFFER_LEN);
+#else
+        firIn(ix, &iInPos, iBuffer48k, BUFFER_LEN);
 #endif
+
+        int qx = input[i+1] >> (I2S_SHIFT - inputShift);
+        qx = removeDC( qx, &qxm1, &qym1 );
+#ifdef INTERPOLATE_96K        
+        firIn(0,  &qInPos, qBuffer96k, BUFFER_LEN);
+        firIn(qx, &qInPos, qBuffer96k, BUFFER_LEN);
+#else
+        firIn(qx, &qInPos, qBuffer48k, BUFFER_LEN);
+#endif
+
+        if( ix < minValueI )
+        {
+            minValueI = ix;
+        }
+        if( qx < minValueQ )
+        {
+            minValueQ = qx;
+        }
+
+        if( ix > maxValueI )
+        {
+            maxValueI = ix;
+        }
+        if( qx > maxValueQ )
+        {
+            maxValueQ = qx;
+        }
+
         if( ix < ADC_OVERLOAD_LOW || ix > ADC_OVERLOAD_HIGH || qx < ADC_OVERLOAD_LOW || qx > ADC_OVERLOAD_HIGH )
         {
             adcOverload = true;
+            setAdcDebug2();
         }
     }
+
+    // Process the I/Q input buffers into left/right output buffers
+    processAudio();
+
+#if 1
+    // Output left and right channels
+    for (i = 0; i < AUDIO_BUFFER_FRAMES; i++)
+    {
+        // Read the decimated output - will zero stuff
+        // as the output runs at the same rate as the input
+        if( !(i % (DECIMATE_FACTOR_48_24 * DECIMATE_FACTOR_24_8)) )
+        {
+            outLeft = leftOutputBuffer[outLRPos];
+            outRight = rightOutputBuffer[outLRPos];
+            outLRPos = (outLRPos+1) & (BUFFER_LEN-1);
+        }
+        else
+        {
+            outLeft = outRight = 0;
+        }
+
+        // Filter the interpolated left and right outputs
+        //outLeft  = fir(outLeft,  &leftOutputPos,  leftInterpolateBuffer,  INTERPOLATE_BUFFER_LEN, interpolateFilterTaps, INTERPOLATE_FILTER_TAP_NUM);
+        //outRight = fir(outRight, &rightOutputPos, rightInterpolateBuffer, INTERPOLATE_BUFFER_LEN, interpolateFilterTaps, INTERPOLATE_FILTER_TAP_NUM);
+
+        output[o++] = outLeft  << I2S_SHIFT;
+        output[o++] = outRight << I2S_SHIFT;
+    }
+#else
+    // Output left and right channels
+    for (i = 0; i < AUDIO_BUFFER_FRAMES; i++)
+    {
+        // Read the decimated output - will repeat samples
+        // as the output runs at the same rate as the input
+        if( !(i % (DECIMATE_FACTOR_48_24 * DECIMATE_FACTOR_24_8)) )
+        {
+            outLeft = leftOutputBuffer[outLRPos] << I2S_SHIFT;
+            outRight = rightOutputBuffer[outLRPos] << I2S_SHIFT;
+            outLRPos = (outLRPos+1) & (DECIMATE_BUFFER_LEN-1);
+        }
+        output[o++] = outLeft;
+        output[o++] = outRight;
+    }
+#endif
 }
 
-static void adc_interrupt_handler()
+static void dma_i2s_in_handler(void)
 {
     setAdcDebug1();
 
-    // Write the output value determined last time. This adds a slight delay but
-    // ensures that the output changes at a consistent time not dependent on the time
-    // taken to do all the calculations for the filters.
-    pwm_set_chan_level(audio_l_slice_num, PWM_CHAN_A, outPWMLeft);
-    pwm_set_chan_level(audio_r_slice_num, PWM_CHAN_A, outPWMRight);
-    
-#ifdef DISPLAY_MIN_MAX
-    if( outPWMLeft > maxOut )
-    {
-        maxOut = outPWMLeft;
+    /* We're double buffering using chained TCBs. By checking which buffer the
+     * DMA is currently reading from, we can identify which buffer it has just
+     * finished reading (the completion of which has triggered this interrupt).
+     */
+    if (*(int32_t**)dma_hw->ch[i2s.dma_ch_in_ctrl].read_addr == i2s.input_buffer) {
+        // It is inputting to the second buffer so we can overwrite the first
+        process_audio((int*)i2s.input_buffer, (int*)i2s.output_buffer);
+    } else {
+        // It is currently inputting the first buffer, so we write to the second
+        process_audio((int*)&i2s.input_buffer[STEREO_BUFFER_SIZE], (int*)&i2s.output_buffer[STEREO_BUFFER_SIZE]);
     }
-
-    if( outPWMLeft < minOut )
-    {
-        minOut = outPWMLeft;
-    }
-#endif
-
-    // If DMA into buffer 0 completed then feed into the FIR
-    if(dma_hw->ints0 & (1u << adcDma0))
-    {
-        dma_channel_configure(adcDma0, &dmaCfg0, adcBuffer0, &adc_hw->fifo, ADC_BUFFER_SIZE, false);
-        feedFir( adcBuffer0 );
-        dma_hw->ints0 = 1u << adcDma0;
-    }
-
-    // If DMA into buffer 1 completed then feed into the FIR
-    if(dma_hw->ints0 & (1u << adcDma1))
-    {
-        dma_channel_configure(adcDma1, &dmaCfg1, adcBuffer1, &adc_hw->fifo, ADC_BUFFER_SIZE, false);
-        feedFir( adcBuffer1 );
-        dma_hw->ints0 = 1u << adcDma1;
-    }
-
-    processAudio();
+    dma_hw->ints0 = 1u << i2s.dma_ch_in_data;  // clear the IRQ
 
     clearAdcDebug1();
 }
 
+
 void ioSetIF( void )
 {
+#ifdef INTERPOLATE_96K        
     // Set the IF oscillator
-    // Because we zero stuff the sample rate
-    // is twice the ADC rate
-    ncoSet( &ncoIF, ifBelow ? INTERMEDIATE_FREQUENCY : -INTERMEDIATE_FREQUENCY, 2 * ADC_SAMPLE_RATE );
+    ncoSet( &ncoIF, ifBelow ? INTERMEDIATE_FREQUENCY : -INTERMEDIATE_FREQUENCY, CODEC_SAMPLE_RATE * INPUT_INTERPOLATE_FACTOR);
+#endif
 }
 
 void core1_main()
@@ -1152,80 +1306,12 @@ void core1_main()
     // Set the BFO
     ncoSet( &ncoBFO, -RX_OFFSET, BFO_SAMPLE_RATE );
 
-    // We need the ADC for audio input
-    adc_init();
+    // Start I2S
+    i2s_program_start_slaved(pio0, &i2sConfig, dma_i2s_in_handler, &i2s);
 
-    // Set up the ADC for the audio input
-    adc_gpio_init(AUDIO_I_GPIO);
-    adc_gpio_init(AUDIO_Q_GPIO);
-    adc_set_clkdiv(ADC_CLOCK_DIVIDER);
-
-    // Configure DMA for ADC transfers
-    adcDma0 = dma_claim_unused_channel(true);
-    adcDma1 = dma_claim_unused_channel(true);
-    dmaCfg0 = dma_channel_get_default_config(adcDma0);
-    dmaCfg1 = dma_channel_get_default_config(adcDma1);
-
-    channel_config_set_transfer_data_size(&dmaCfg0, DMA_SIZE_16);
-    channel_config_set_read_increment(&dmaCfg0, false);
-    channel_config_set_write_increment(&dmaCfg0, true);
-    channel_config_set_dreq(&dmaCfg0, DREQ_ADC);
-    channel_config_set_chain_to(&dmaCfg0, adcDma1);
-
-    channel_config_set_transfer_data_size(&dmaCfg1, DMA_SIZE_16);
-    channel_config_set_read_increment(&dmaCfg1, false);
-    channel_config_set_write_increment(&dmaCfg1, true);
-    channel_config_set_dreq(&dmaCfg1, DREQ_ADC);
-    channel_config_set_chain_to(&dmaCfg1, adcDma0);
-
-    dma_set_irq0_channel_mask_enabled((1u<<adcDma0) | (1u<<adcDma1), true);
-    irq_set_exclusive_handler(DMA_IRQ_0, adc_interrupt_handler);
-    irq_set_enabled(DMA_IRQ_0, true);
-
-    hw_clear_bits(&adc_hw->fcs, ADC_FCS_UNDER_BITS);
-    hw_clear_bits(&adc_hw->fcs, ADC_FCS_OVER_BITS);
-    adc_fifo_setup(true, true, 1, false, false);
-    adc_select_input(0);
-    adc_set_round_robin( (1<<AUDIO_I_ADC) | (1<<AUDIO_Q_ADC) );
-
-    dma_channel_configure(adcDma0, &dmaCfg0, adcBuffer0, &adc_hw->fifo, ADC_BUFFER_SIZE, false);
-    dma_channel_configure(adcDma1, &dmaCfg1, adcBuffer1, &adc_hw->fifo, ADC_BUFFER_SIZE, false);
-    dma_channel_set_irq0_enabled(adcDma0, true);
-    dma_channel_set_irq0_enabled(adcDma1, true);
-    dma_start_channel_mask(1u << adcDma0);
-    adc_run(true);
-    
     while (1)
     {
     }
-}
-
-// Initialise a PWM for audio output
-static int initAudioPWM( uint16_t gpio )
-{
-    uint16_t audio_slice_num;
-
-    gpio_set_function(gpio, GPIO_FUNC_PWM);
-    audio_slice_num = pwm_gpio_to_slice_num(gpio);
-    pwm_set_clkdiv_int_frac(audio_slice_num, pwmDivider, 0);
-    pwm_set_wrap(audio_slice_num, AUDIO_WRAP);
-    pwm_set_phase_correct(audio_slice_num,false);
-    pwm_set_chan_level(audio_slice_num, PWM_CHAN_A, AUDIO_WRAP/2);
-    pwm_set_enabled(audio_slice_num, true);
-
-    return audio_slice_num;
-}
-
-void ioSetPWMDiv( uint8_t div )
-{
-    pwmDivider = div;
-    pwm_set_clkdiv_int_frac(audio_l_slice_num, div, 0);
-    pwm_set_clkdiv_int_frac(audio_r_slice_num, div, 0);
-}
-
-uint8_t ioGetPWMDiv( void )
-{
-    return pwmDivider;
 }
 
 void ioSetVolume( uint8_t vol )
@@ -1418,23 +1504,15 @@ void ioWriteRXEnableLow()
 // Switch the sidetone output on or off
 void ioWriteSidetoneOn()
 {
-#ifdef PWM_SIDETONE
-    pwm_set_enabled(sidetone_slice_num, true);
-#else
     sidetoneOn = true;
 
     // Always start the sine wave at zero crossing
     currentSinePos = 0;
-#endif
 }
 
 void ioWriteSidetoneOff()
 {
-#ifdef PWM_SIDETONE
-    pwm_set_enabled(sidetone_slice_num, false);
-#else
     sidetoneOn = false;
-#endif
 }
 
 // Switch the band relay output on or off
@@ -1482,10 +1560,12 @@ void ioInit()
         gpioSetOutput(relayGpio[i]);
     }
 
-    // Set up PWM for audio output
-    audio_l_slice_num = initAudioPWM( AUDIO_PWM_L_GPIO );
-    audio_r_slice_num = initAudioPWM( AUDIO_PWM_R_GPIO );
+    // Initialise the CODEC
+    WM8960Init();
 
-    // The second core sets up and uses the ADC
+    // The second core runs the DSP code
     multicore_launch_core1(core1_main);
+
+    // Enable the headphone output
+    WM8960SetHeadphoneVolume();
 }
