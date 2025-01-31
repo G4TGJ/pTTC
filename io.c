@@ -993,7 +993,7 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
     out = ((int)out * muteFactor) / maxMuteFactor;
 
     // Apply AGC
-    //out = applyAGC( out );
+    out = applyAGC( out );
 
     // Apply the volume
     out = (out*volumeMultiplier[volume])/VOLUME_PRECISION;
