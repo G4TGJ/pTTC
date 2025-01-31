@@ -1216,7 +1216,7 @@ static inline void process_audio(const int* input, int* output)
     // Process the I/Q input buffers into left/right output buffers
     processAudio();
 
-#if 1
+#if 0
     // Output left and right channels
     for (i = 0; i < AUDIO_BUFFER_FRAMES; i++)
     {
@@ -1250,7 +1250,7 @@ static inline void process_audio(const int* input, int* output)
         {
             outLeft = leftOutputBuffer[outLRPos] << I2S_SHIFT;
             outRight = rightOutputBuffer[outLRPos] << I2S_SHIFT;
-            outLRPos = (outLRPos+1) & (DECIMATE_BUFFER_LEN-1);
+            outLRPos = (outLRPos+1) & (BUFFER_LEN-1);
         }
         output[o++] = outLeft;
         output[o++] = outRight;
