@@ -1562,9 +1562,9 @@ void ioInit()
     // Initialise the CODEC
     WM8960Init();
 
-    // The second core runs the DSP code
-    multicore_launch_core1(core1_main);
-
     // Enable the headphone output
     WM8960SetHeadphoneVolume();
+
+    // The second core runs the DSP code
+    multicore_launch_core1(core1_main);
 }
