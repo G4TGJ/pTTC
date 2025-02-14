@@ -68,7 +68,7 @@
 #define SI_XTAL_LOAD_CAP SI_XTAL_LOAD_8PF
 
 // I2C clock speed
-#define I2C_CLOCK_RATE 400000
+#define I2C_CLOCK_RATE 100000
 
 // Transmit and receive clocks. Direct conversion receive uses 2 clocks (0 and 1) for quadrature.
 // Superhet uses one clock for the BFO. In this case use clocks 0 and 2 so that BFO can be set
@@ -338,6 +338,11 @@
 
 #define MIN_ADC_VOLUME 0x00
 #define MAX_ADC_VOLUME 0xFF
+
+// Default input boost gain
+#define MIN_INPUT_BOOST_GAIN 0
+#define MAX_INPUT_BOOST_GAIN 7
+#define DEFAULT_INPUT_BOOST_GAIN 7
 
 //#define INTERPOLATE_96K
 

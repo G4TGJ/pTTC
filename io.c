@@ -913,7 +913,7 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
         default:
             break;
     }
-
+#if 0
     static bool bWasMuted;
 
     // Mute the RX if required
@@ -963,7 +963,7 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
             }
         }
     }
-
+#endif
     // Insert sidetone and set the appropriate volume
     // When the sidetone is switched off we fade it down to
     // reduce clicks
@@ -990,7 +990,7 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
             }
         }
     }
-    out = ((int)out * muteFactor) / maxMuteFactor;
+    //out = ((int)out * muteFactor) / maxMuteFactor;
 
     // Apply AGC
     out = applyAGC( out );
@@ -1367,7 +1367,7 @@ void ioSetHilbertFilter( uint8_t filter )
     }
 }
 
-u_int8_t ioGetVolume( void )
+uint8_t ioGetVolume( void )
 {
     return volume;
 }
@@ -1385,7 +1385,7 @@ void ioSetSidetoneVolume( uint8_t vol )
     }
 }
 
-u_int8_t ioGetSidetoneVolume( void )
+uint8_t ioGetSidetoneVolume( void )
 {
     return sidetoneVolume;
 }
@@ -1491,12 +1491,14 @@ void ioWritePreampOff()
 void ioWriteRXEnableHigh()
 {
     gpio_put(RX_ENABLE_GPIO, 1);
+    WM8960UnmuteInput();
     bMuteRX = false;
 }
 
 void ioWriteRXEnableLow()
 {
     bMuteRX = true;
+    WM8960MuteInput();
     gpio_put(RX_ENABLE_GPIO, 0);
 }
 
