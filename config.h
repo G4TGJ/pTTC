@@ -70,13 +70,17 @@
 // I2C clock speed
 #define I2C_CLOCK_RATE 100000
 
+// There is an inverter on the transmit clock so it must be high during RX
+// Clock2 is high when disabled. Others are low.
+#define CLOCK_DISABLE_STATE 0x10
+
 // Transmit and receive clocks. Direct conversion receive uses 2 clocks (0 and 1) for quadrature.
 // Superhet uses one clock for the BFO. In this case use clocks 0 and 2 so that BFO can be set
 // accurately. TX uses the third clock, the one not used for RX.
 #define NUM_CLOCKS 3
 #define RX_CLOCK_A 0
-#define RX_CLOCK_B (BFOFrequency == 0 ? 1 : 2)
-#define TX_CLOCK   (BFOFrequency == 0 ? 2 : 1)
+#define RX_CLOCK_B (intermediateFrequency == 0 ? 1 : 2)
+#define TX_CLOCK   (intermediateFrequency == 0 ? 2 : 1)
 
 // The minimum and maximum crystal frequencies in the setting menu
 // Have to allow for adjusting above or below actual valid crystal range
@@ -102,11 +106,11 @@
 // How often to update the display
 #define DISPLAY_INTERVAL 50
 
-// Default, min and max BFO frequency
+// Default, min and max intermediate frequency
 // 0 means direct conversion
-#define DEFAULT_BFO_FREQ	0UL
-#define MIN_BFO_FREQUENCY	0UL
-#define MAX_BFO_FREQUENCY	99999999UL
+#define DEFAULT_INTERMEDIATE_FREQ	0UL
+#define MIN_INTERMEDIATE_FREQUENCY	0UL
+#define MAX_INTERMEDIATE_FREQUENCY	99999999UL
 
 // Position of default band in the frequency table defined in main.c
 // The band is stored in NVRAM so this is only used on first power up
