@@ -7,6 +7,9 @@
 
 #define ULONG_MAX 0xFFFFFFFF
 
+// We are building the pico SDR transceiver
+#define PSDR
+
 // Address of the LCD display
 #define LCD_I2C_ADDRESS 0x27
 
