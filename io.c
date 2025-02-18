@@ -1,5 +1,9 @@
-/*
- * io.c
+/**
+ * @file io.c
+ * @brief This file contains the implementation of input/output operations.
+ * 
+ * This file is part of the pTTC project and is located at https://github.com/richard/pTTC/io.c.
+ * It includes functions and definitions for handling various I/O operations.
  *
  * Created: 15/07/2023
  * Author : Richard Tomlinson G4TGJ
@@ -7,6 +11,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#define _USE_MATH_DEFINES
 #include <math.h>
 #include "hardware/adc.h"
 #include "hardware/dma.h"
@@ -265,6 +270,7 @@ static void gpioSetInputWithPullup( uint16_t gpio )
 
 static uint16_t ifShiftPos;
 
+// Buffers for storing samples during FIR processing
 static int iOutBuffer[OUTPUT_BUFFER_LEN];
 static int qOutBuffer[OUTPUT_BUFFER_LEN];
 static int hilbertBuffer[HILBERT_FILTER_BUFFER_LEN];
@@ -272,6 +278,7 @@ static int delayBuffer[HILBERT_FILTER_BUFFER_LEN];
 static int leftBuffer[LEFT_BUFFER_LEN];
 static int rightBuffer[RIGHT_BUFFER_LEN];
 
+// Current sample position in the buffers
 static uint16_t iOutCurrentSample;
 static uint16_t qOutCurrentSample;
 static uint16_t hilbertCurrentSample;
@@ -346,6 +353,20 @@ static bool sidetoneOn;
 
 static bool bMuteRX;
 
+/**
+ * @brief Delays the input sample by a specified number of samples.
+ *
+ * This function stores the input sample in a circular buffer and returns
+ * the delayed sample from the buffer. The delay is specified in terms of
+ * the number of samples.
+ *
+ * @param sample The input sample to be delayed.
+ * @param current Pointer to the current position in the buffer.
+ * @param buffer The circular buffer to store the samples.
+ * @param bufLen The length of the circular buffer (must be a power of 2).
+ * @param delay The number of samples to delay the input sample.
+ * @return The delayed sample from the buffer.
+ */
 static inline int delay( int sample, uint16_t *current, int *buffer, int bufLen, int delay )
 {
     int result = 0;
@@ -362,6 +383,17 @@ static inline int delay( int sample, uint16_t *current, int *buffer, int bufLen,
     return buffer[(*current-delay) & (bufLen-1)];
 }
 
+/**
+ * @brief Stores the input sample in a circular buffer.
+ *
+ * This function stores the input sample in a circular buffer and updates
+ * the current position in the buffer. The buffer length must be a power of 2.
+ *
+ * @param sample The input sample to be stored.
+ * @param current Pointer to the current position in the buffer.
+ * @param buffer The circular buffer to store the samples.
+ * @param bufLen The length of the circular buffer (must be a power of 2).
+ */
 static inline void firIn( int sample, uint16_t *current, int *buffer, int bufLen )
 {
     // Store the new sample
@@ -371,7 +403,19 @@ static inline void firIn( int sample, uint16_t *current, int *buffer, int bufLen
     *current = (*current+1) & (bufLen-1);
 }
 
-// bufLen must be a power of 2
+/**
+ * @brief Computes the output of a FIR filter.
+ *
+ * This function calculates the output of a Finite Impulse Response (FIR) filter
+ * by convolving the input buffer with the filter taps.
+ *
+ * @param current The current position in the buffer.
+ * @param buffer The circular buffer containing the input samples.
+ * @param bufLen The length of the circular buffer (must be a power of 2).
+ * @param taps The FIR filter taps.
+ * @param numTaps The number of FIR filter taps.
+ * @return The filtered sample.
+ */
 static inline int firOut( uint16_t current, int *buffer, int bufLen, const int *taps, int numTaps )
 {
     int tap;
@@ -390,27 +434,44 @@ static inline int firOut( uint16_t current, int *buffer, int bufLen, const int *
     return (result + 16384) / 32768;
 }
 
+/**
+ * @brief Applies a Finite Impulse Response (FIR) filter to the input sample.
+ *
+ * This function stores the input sample in a circular buffer and calculates
+ * the filtered output by convolving the input buffer with the filter taps.
+ *
+ * @param sample The input sample to be filtered.
+ * @param current Pointer to the current position in the buffer.
+ * @param buffer The circular buffer containing the input samples.
+ * @param bufLen The length of the circular buffer (must be a power of 2).
+ * @param taps The FIR filter taps.
+ * @param numTaps The number of FIR filter taps.
+ * @return The filtered sample.
+ */
 static int inline fir( int sample, uint16_t *current, int *buffer, int bufLen, const int *taps, int numTaps )
 {
     firIn( sample,  current, buffer, bufLen );
     return firOut( *current, buffer, bufLen, taps, numTaps );
 }
 
-// Filter and decimate
-//
-// factor - Decimation factor
-// count - Number of samples to process
-// inBuf - Pointer to input buffer containing the samples
-// inBufLen - Length of the input buffer (Must be power of 2)
-// inPos - Pointer to position in the input buffer
-// outBuf - Pointer to output buffer
-// outBufLen - Length of the output buffer (Must be power of 2)
-// outPos - Pointer to position in the output buffer
-// taps - Pointer to FIR filter taps
-// numTaps - The number of FIR taps
-// precision - Bits of precision of the FIR
-//
-// count/factor must be an integer
+/**
+ * @brief Decimates the input samples by a specified factor using a FIR filter.
+ *
+ * This function processes the input samples by applying a FIR filter and then
+ * decimating the filtered samples by the specified factor. The decimated samples
+ * are stored in the output buffer.
+ *
+ * @param factor The decimation factor.
+ * @param count The number of input samples to process.
+ * @param inBuf Pointer to the input buffer containing the samples.
+ * @param inBufLen The length of the input buffer (must be a power of 2).
+ * @param inPos Pointer to the current position in the input buffer.
+ * @param outBuf Pointer to the output buffer to store the decimated samples.
+ * @param outBufLen The length of the output buffer (must be a power of 2).
+ * @param outPos Pointer to the current position in the output buffer.
+ * @param taps Pointer to the FIR filter taps.
+ * @param numTaps The number of FIR filter taps.
+ */
 static inline void decimate( int factor, int count, int *inBuf, int inBufLen, uint16_t *inPos, int *outBuf, int outBufLen, uint16_t *outPos, const int *taps, int numTaps )
 {
     // Process each decimation
@@ -424,6 +485,27 @@ static inline void decimate( int factor, int count, int *inBuf, int inBufLen, ui
     }
 }
 
+/**
+ * @brief Decimates the input samples by a specified factor using a CIC filter.
+ *
+ * This function processes the input samples by applying a Cascaded Integrator-Comb (CIC) filter 
+ * and then decimating the filtered samples by the specified factor. The decimated samples 
+ * are stored in the output buffer.
+ *
+ * @param factor The decimation factor.
+ * @param order The order of the CIC filter.
+ * @param gainBits The number of bits to shift the gain.
+ * @param count The number of input samples to process.
+ * @param inBuf Pointer to the input buffer containing the samples.
+ * @param inBufLen The length of the input buffer (must be a power of 2).
+ * @param inPos Pointer to the current position in the input buffer.
+ * @param accumulator Pointer to the accumulator array for the integrator stages.
+ * @param combOutput Pointer to the comb output array.
+ * @param previousInput Pointer to the previous input array for the comb stages.
+ * @param outBuf Pointer to the output buffer to store the decimated samples.
+ * @param outBufLen The length of the output buffer (must be a power of 2).
+ * @param outPos Pointer to the current position in the output buffer.
+ */
 static inline void decimateCIC( int factor, int order, int gainBits, int count, int *inBuf, int inBufLen, uint16_t *inPos, int *accumulator, int *combOutput, int *previousInput, int *outBuf, int outBufLen, uint16_t *outPos )
 {
     int i,j;
@@ -476,7 +558,21 @@ static inline void decimateCIC( int factor, int order, int gainBits, int count, 
     }
 }
 
-// bufLen must be a power of 2
+/**
+ * @brief Applies a Hilbert transform to the input sample.
+ *
+ * This function stores the input sample in a circular buffer and calculates
+ * the Hilbert transformed output by convolving the input buffer with the filter taps.
+ *
+ * @param sample The input sample to be transformed.
+ * @param current Pointer to the current position in the buffer.
+ * @param buffer The circular buffer containing the input samples.
+ * @param bufLen The length of the circular buffer (must be a power of 2).
+ * @param taps The Hilbert transform filter taps.
+ * @param numTaps The number of Hilbert transform filter taps.
+ * @param precision The precision of the filter taps.
+ * @return The transformed sample.
+ */
 static int inline hilbert( int sample, uint16_t *current, int *buffer, int bufLen, const int *taps, int numTaps, int precision )
 {
     int tap;
@@ -507,6 +603,16 @@ static int inline hilbert( int sample, uint16_t *current, int *buffer, int bufLe
 #define B1 -55751
 #define B2  32394
 
+/**
+ * @brief Applies a CW peaking IIR filter to the input sample.
+ *
+ * This function processes the input sample using a peaking IIR filter
+ * designed for CW signals. It uses a second-order IIR filter with
+ * predefined coefficients.
+ *
+ * @param x The input sample to be filtered.
+ * @return The filtered sample.
+ */
 static int inline cwPeakIIR( int x )
 {
     static int xm1, xm2, ym1, ym2;
@@ -520,8 +626,19 @@ static int inline cwPeakIIR( int x )
     return y;
 }
 
+/* Functions used for debugging purposes if the relevant defines are set.
+** Used for timing purposes - the output pins can be monitored on a scope
+*/
+
+/* State of debug pin 1 */
 static bool adcDebugState1;
 
+/**
+ * @brief Toggles the state of the ADC debug GPIO pin 1.
+ *
+ * This function toggles the state of the ADC debug GPIO pin 1, which can be used
+ * for debugging purposes to monitor the state of the ADC.
+ */
 static inline void toggleAdcDebug1()
 {
 #ifdef ADC_DEBUG1_OUTPUT_GPIO
@@ -530,6 +647,13 @@ static inline void toggleAdcDebug1()
 #endif
 }
 
+/**
+ * @brief Sets the ADC debug state 1 to true and updates the corresponding GPIO pin.
+ * 
+ * This function sets the adcDebugState1 to true and updates the GPIO pin defined by
+ * ADC_DEBUG1_OUTPUT_GPIO to reflect this state. This function is only available if
+ * ADC_DEBUG1_OUTPUT_GPIO is defined.
+ */
 static inline void setAdcDebug1()
 {
 #ifdef ADC_DEBUG1_OUTPUT_GPIO
@@ -538,6 +662,13 @@ static inline void setAdcDebug1()
 #endif
 }
 
+/**
+ * @brief Clears the ADC debug state 1 and updates the corresponding GPIO pin.
+ * 
+ * This function sets the adcDebugState1 to false and updates the GPIO pin defined by
+ * ADC_DEBUG1_OUTPUT_GPIO to reflect this state. This function is only available if
+ * ADC_DEBUG1_OUTPUT_GPIO is defined.
+ */
 static inline void clearAdcDebug1()
 {
 #ifdef ADC_DEBUG1_OUTPUT_GPIO
@@ -546,8 +677,16 @@ static inline void clearAdcDebug1()
 #endif
 }
 
+/* State of debug pin 2 */
 static bool adcDebugState2;
 
+/**
+ * @brief Toggles the ADC debug state 2 and updates the corresponding GPIO pin.
+ * 
+ * This function toggles the adcDebugState2 and updates the GPIO pin defined by
+ * ADC_DEBUG2_OUTPUT_GPIO to reflect this state. This function is only available if
+ * ADC_DEBUG2_OUTPUT_GPIO is defined.
+ */
 static inline void toggleAdcDebug2()
 {
 #ifdef ADC_DEBUG2_OUTPUT_GPIO
@@ -556,6 +695,13 @@ static inline void toggleAdcDebug2()
 #endif
 }
 
+/**
+ * @brief Sets the ADC debug state 2 to true and updates the corresponding GPIO pin.
+ * 
+ * This function sets the adcDebugState2 to true and updates the GPIO pin defined by
+ * ADC_DEBUG2_OUTPUT_GPIO to reflect this state. This function is only available if
+ * ADC_DEBUG2_OUTPUT_GPIO is defined.
+ */
 static inline void setAdcDebug2()
 {
 #ifdef ADC_DEBUG2_OUTPUT_GPIO
@@ -564,6 +710,13 @@ static inline void setAdcDebug2()
 #endif
 }
 
+/**
+ * @brief Clears the ADC debug state 2 and updates the corresponding GPIO pin.
+ * 
+ * This function sets the adcDebugState2 to false and updates the GPIO pin defined by
+ * ADC_DEBUG2_OUTPUT_GPIO to reflect this state. This function is only available if
+ * ADC_DEBUG2_OUTPUT_GPIO is defined.
+ */
 static inline void clearAdcDebug2()
 {
 #ifdef ADC_DEBUG2_OUTPUT_GPIO
@@ -650,7 +803,41 @@ static inline void shiftFrequency2( int *pI, int *pQ )
 #define shiftFrequencyUp   shiftFrequency1
 #endif
 
-// Numerically controlled oscillator
+/*
+* @brief Implementation of a Numerically Controlled Oscillator (NCO) for signal processing.
+*
+* This is an implementation of a Numerically Controlled Oscillator (NCO) which is used
+* to generate precise frequency signals. The NCO is implemented using a cosine lookup table and 
+* phase accumulator technique.
+*
+* The NCO structure and functions provided in this file allow for setting the frequency of the 
+* oscillator, generating the next value of the oscillator, and obtaining the I and Q components 
+* of the oscillator signal.
+*
+* The cosine table is initialized using the ncoInit() function, which precomputes the cosine values 
+* scaled by a defined factor. The ncoSet() function calculates the frequency control word (FCW) 
+* based on the desired frequency and sample rate. The ncoOsc(), ncoOscI(), ncoOscQ(), and 
+* ncoOscIncrementPhase() functions are used to generate the oscillator signal and manage the phase 
+* of the oscillator.
+*
+* The NCO structure (sNCO) contains:
+* - ncoFCW: The frequency control word, calculated by ncoSet().
+* - phase: The current phase of the oscillator.
+*
+* The cosine table (ncoCos) is statically allocated and populated during initialization.
+*
+* Usage:
+* 1. Initialize the cosine table using ncoInit().
+* 2. Set the desired frequency using ncoSet().
+* 3. Generate oscillator values using ncoOsc(), ncoOscI(), ncoOscQ(), and ncoOscIncrementPhase().
+*
+* Example:
+* @code
+* ncoInit();
+* ncoSet(&ncoBFO, 1000, 48000); // Set BFO to 1 kHz with a sample rate of 48 kHz
+* int value = ncoOsc(&ncoBFO);  // Get the next oscillator value
+* @endcode
+*/
 
 // Integer value representing 1.0
 #define NCO_SCALE   32768
@@ -681,15 +868,32 @@ static struct sNCO ncoIF;
 // Oscillator for the BFO
 static struct sNCO ncoBFO;
 
-// Calculates the frequency control word for the frequency and given sample rate
+/**
+ * @brief Sets the frequency of the Numerically Controlled Oscillator (NCO).
+ *
+ * This function initializes the phase of the NCO to zero and calculates the 
+ * frequency control word (FCW) based on the desired frequency and sample rate.
+ *
+ * @param nco Pointer to the NCO structure.
+ * @param frequency The desired frequency in Hz.
+ * @param sampleRate The sample rate in Hz.
+ */
 static void ncoSet( struct sNCO *nco, int frequency, int sampleRate)
 {
     nco->phase = 0;
     nco->ncoFCW = ((frequency * NCO_COS_LEN) << NCO_BITS) / sampleRate;
 }
 
-// Returns the next value of the oscillator
-// Use this or use ncoOscI(), ncoOscQ() and ncoOscIncrementPhase()
+/**
+ * @brief Generates the next value of the Numerically Controlled Oscillator (NCO).
+ *
+ * This function returns the next value of the NCO by looking up the cosine table
+ * based on the current phase. It then increments the phase by the frequency control word (FCW).
+ * Use this or use ncoOscI(), ncoOscQ() and ncoOscIncrementPhase()
+ *
+ * @param nco Pointer to the NCO structure.
+ * @return The next value of the NCO.
+ */
 static inline int ncoOsc( struct sNCO *nco )
 {
     int result = ncoCos[nco->phase >> NCO_BITS];
@@ -697,28 +901,55 @@ static inline int ncoOsc( struct sNCO *nco )
     return result;
 }
 
-// Returns the I component of the oscillator.
-// Must be followed by ncoOscIncrementPhase()
+/**
+ * @brief Generates the next I component for the given NCO (Numerically Controlled Oscillator) structure.
+ *
+ * This function computes the next value of the oscillator based on the state of the provided NCO structure.
+ * Must be followed by ncoOscIncrementPhase() to move to the next phase.
+ *
+ * @param nco Pointer to the sNCO structure that holds the state of the oscillator.
+ * @return The next oscillator value as an integer.
+ */
 static inline int ncoOscI( struct sNCO *nco )
 {
     return ncoCos[nco->phase >> NCO_BITS];
 }
 
-// Returns the Q component of the oscillator.
-// Must be followed by ncoOscIncrementPhase()
+/**
+ * @brief Generates the next Q component for the given NCO (Numerically Controlled Oscillator) structure.
+ *
+ * This function computes the next value of the oscillator based on the state of the provided NCO structure.
+ * Must be followed by ncoOscIncrementPhase() to move to the next phase.
+ *
+ * @param nco Pointer to the sNCO structure that holds the state of the oscillator.
+ * @return The next oscillator value as an integer.
+ */
 static inline int ncoOscQ( struct sNCO *nco )
 {
     return ncoCos[((nco->phase >> NCO_BITS) - NCO_COS_LEN/4)&(NCO_COS_LEN-1)];
 }
 
-// Moves to the next phase of the oscillator.
-// Use after calling ncoOscI() and/or ncoOscQ().
+/**
+ * @brief Increments the phase of the Numerically Controlled Oscillator (NCO).
+ *
+ * This function increments the phase of the NCO by the frequency control word (FCW).
+ * It should be called after generating the I and/or Q components of the oscillator signal
+ * i.e. after calling ncoOscI() and/or ncoOscQ().
+ *
+ * @param nco Pointer to the NCO structure.
+ */
 static inline void ncoOscIncrementPhase( struct sNCO *nco )
 {
     nco->phase += nco->ncoFCW;
 }
 
-// Initialise the NCO cosine table
+/**
+ * @brief Initializes the Numerically Controlled Oscillator (NCO) cosine table.
+ *
+ * This function precomputes the cosine values scaled by a defined factor and
+ * stores them in the ncoCos table. The table is used for generating precise
+ * frequency signals in the NCO.
+ */
 static void ncoInit( void )
 {
     for( int i = 0 ; i < NCO_COS_LEN ; i++ )
@@ -727,6 +958,17 @@ static void ncoInit( void )
     }
 }
 
+/**
+ * @brief Mixes the input I and Q signals with the NCO to shift the frequency.
+ *
+ * This function performs a complex mixing operation on the input I and Q signals
+ * using the Numerically Controlled Oscillator (NCO). It shifts the frequency of
+ * the input signals by multiplying them with the I and Q components of the NCO.
+ *
+ * @param pI Pointer to the input I signal, which will be modified in place.
+ * @param pQ Pointer to the input Q signal, which will be modified in place.
+ * @param nco Pointer to the NCO structure used for frequency shifting.
+ */
 static inline void complexMixer( int *pI, int *pQ, struct sNCO *nco )
 {
     // Get the next quadrature oscillator value
@@ -743,7 +985,18 @@ static inline void complexMixer( int *pI, int *pQ, struct sNCO *nco )
     *pQ = q;
 }
 
-// Remove DC. Requires two static values to keep track.
+/**
+ * @brief Removes the DC component from the input sample.
+ *
+ * This function applies a high-pass filter to remove the DC component from the input sample.
+ * It uses a simple IIR filter to achieve this.
+ * Requires two static values to keep track.
+ *
+ * @param x The input sample from which the DC component is to be removed.
+ * @param xm1 Pointer to the previous input sample.
+ * @param ym1 Pointer to the previous output sample.
+ * @return The input sample with the DC component removed.
+ */
 static inline int removeDC( int x, int *xm1, int *ym1 )
 {
     int y = x - *xm1 + (*ym1 * 254) / 256;
@@ -782,7 +1035,17 @@ uint32_t agcAmplitude;
 // The gain set by AGC
 int agcGain = AGC_UNITY_GAIN;
 
-// Applies AGC to the sample
+/**
+ * @brief Applies Automatic Gain Control (AGC) to the input sample.
+ *
+ * This function adjusts the gain of the input sample to maintain a consistent
+ * amplitude level. It calculates the amplitude of the input sample, updates
+ * the AGC buffer, and adjusts the gain based on the amplitude relative to a
+ * predefined threshold.
+ *
+ * @param in The input sample to which AGC is applied.
+ * @return The input sample with AGC applied.
+ */
 static inline int applyAGC( int in )
 {
     // Calculate the amplitude of the incoming sample. No need to take the square root.
@@ -832,7 +1095,18 @@ static inline int applyAGC( int in )
     return (in * agcGain) / AGC_UNITY_GAIN;
 }
 
-// Process a pair of I and Q samples and create the left and right outputs
+/**
+ * @brief Processes a pair of I and Q samples to create the left and right audio outputs.
+ *
+ * This function takes in-phase (I) and quadrature (Q) samples, applies various signal processing
+ * techniques such as filtering, mixing, and gain adjustments, and produces the left and right
+ * audio output samples.
+ *
+ * @param inI The input in-phase (I) sample.
+ * @param inQ The input quadrature (Q) sample.
+ * @param outLeft Pointer to the output left audio sample.
+ * @param outRight Pointer to the output right audio sample.
+ */
 static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
 {
     int out, outI, outQ;
@@ -1029,7 +1303,13 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
     }
 }
 
-// Shift the incoming signal by the IF
+/**
+ * @brief Shifts the frequency of the input signal by the intermediate frequency (IF).
+ *
+ * This function shifts the frequency of the input signal by the intermediate frequency (IF)
+ * using a complex mixer or frequency shifter. The direction of the shift (up or down) is determined
+ * by the ifBelow flag.
+ */
 static inline void shiftIF()
 {
     // Shift the frequency down by the IF
@@ -1051,8 +1331,12 @@ static inline void shiftIF()
     }
 }
 
-// Process the incoming buffers of I and Q samples and create the outgoing
-// left and right channel buffers
+/**
+ * @brief Processes the incoming buffers of I and Q samples and creates the outgoing left and right channel buffers.
+ *
+ * This function applies various signal processing techniques such as filtering, decimation, and mixing
+ * to the input I and Q samples to produce the left and right audio output samples.
+ */
 static inline void processAudio()
 {
     int i;
@@ -1151,6 +1435,16 @@ static inline void processAudio()
 
 volatile int changeIQPhasing, iqPhasing;
 
+/**
+ * @brief Processes the audio input and generates the audio output.
+ *
+ * This function processes the audio input samples, applies various signal processing
+ * techniques such as filtering, mixing, and gain adjustments, and produces the audio
+ * output samples.
+ *
+ * @param input Pointer to the input buffer containing the audio samples.
+ * @param output Pointer to the output buffer to store the processed audio samples.
+ */
 static inline void process_audio(const int* input, int* output)
 {
     int i;
@@ -1258,6 +1552,12 @@ static inline void process_audio(const int* input, int* output)
 #endif
 }
 
+/**
+ * @brief DMA interrupt handler for I2S input.
+ *
+ * This function is called when the DMA transfer for I2S input is complete.
+ * It processes the audio input samples and generates the audio output samples.
+ */
 static void dma_i2s_in_handler(void)
 {
     setAdcDebug1();
@@ -1279,6 +1579,12 @@ static void dma_i2s_in_handler(void)
 }
 
 
+/**
+ * @brief Sets the Intermediate Frequency (IF) oscillator.
+ *
+ * This function initializes the Numerically Controlled Oscillator (NCO) for the Intermediate Frequency (IF)
+ * based on whether the IF is below or above the desired frequency.
+ */
 void ioSetIF( void )
 {
 #ifdef INTERPOLATE_96K        
@@ -1287,6 +1593,13 @@ void ioSetIF( void )
 #endif
 }
 
+/**
+ * @brief Main function for core 1. Does all the DSP processing.
+ *
+ * This function initializes the necessary hardware and peripherals, sets up the
+ * Numerically Controlled Oscillator (NCO), and starts the I2S interface. It then
+ * enters an infinite loop to keep the core running.
+ */
 void core1_main()
 {
 #ifdef ADC_DEBUG1_OUTPUT_GPIO
@@ -1313,6 +1626,14 @@ void core1_main()
     }
 }
 
+/**
+ * @brief Sets the volume level.
+ *
+ * This function sets the volume level to the specified value if it is within
+ * the valid range defined by MIN_VOLUME and MAX_VOLUME.
+ *
+ * @param vol The desired volume level.
+ */
 void ioSetVolume( uint8_t vol )
 {
     if( vol >= MIN_VOLUME && vol <= MAX_VOLUME )
@@ -1321,21 +1642,50 @@ void ioSetVolume( uint8_t vol )
     }
 }
 
+/**
+ * @brief Gets the current filter index.
+ *
+ * This function returns the index of the currently selected filter.
+ *
+ * @return The index of the current filter.
+ */
 uint8_t ioGetFilter( void )
 {
     return currentFilter;
 }
 
+/**
+ * @brief Gets the text description of the current filter.
+ *
+ * This function returns a pointer to the text description of the currently selected filter.
+ *
+ * @return A pointer to the text description of the current filter.
+ */
 const char *ioGetFilterText( void )
 {
     return filters[currentFilter].text;
 }
 
+/**
+ * @brief Retrieves the number of filters.
+ *
+ * This function returns the number of filters currently configured.
+ *
+ * @return The number of filters as an 8-bit unsigned integer.
+ */
 uint8_t ioGetNumFilters( void )
 {
     return NUM_FILTERS;
 }
 
+/**
+ * @brief Sets the current filter.
+ *
+ * This function sets the current filter to the specified filter index
+ * if it is within the valid range defined by 0 and NUM_FILTERS.
+ *
+ * @param filter The index of the filter to set.
+ */
 void ioSetFilter( uint8_t filter )
 {
     if( filter >= 0 && filter < NUM_FILTERS )
@@ -1367,12 +1717,27 @@ void ioSetHilbertFilter( uint8_t filter )
     }
 }
 
+/**
+ * @brief Gets the current volume level.
+ *
+ * This function returns the current volume level.
+ *
+ * @return The current volume level.
+ */
 uint8_t ioGetVolume( void )
 {
     return volume;
 }
 
 #ifdef VARIABLE_SIDETONE_VOLUME
+/**
+ * @brief Sets the sidetone volume level.
+ *
+ * This function sets the sidetone volume level to the specified value if it is within
+ * the valid range defined by MIN_VOLUME and MAX_VOLUME.
+ *
+ * @param vol The desired sidetone volume level.
+ */
 void ioSetSidetoneVolume( uint8_t vol )
 {
     if( vol >= MIN_VOLUME && vol <= MAX_VOLUME )
@@ -1385,12 +1750,25 @@ void ioSetSidetoneVolume( uint8_t vol )
     }
 }
 
+/**
+ * @brief Get the current sidetone volume.
+ *
+ * This function retrieves the current volume level of the sidetone.
+ *
+ * @return The current sidetone volume as an 8-bit unsigned integer.
+ */
 uint8_t ioGetSidetoneVolume( void )
 {
     return sidetoneVolume;
 }
 #endif
 
+/**
+ * @brief Structure to hold the GPIO pins for rotary encoders.
+ *
+ * This structure defines the GPIO pins used for the A and B channels,
+ * as well as the switch, for each rotary encoder.
+ */
 static struct
 {
     uint8_t a;
@@ -1403,6 +1781,18 @@ rotary[NUM_ROTARIES] =
     {ROTARY_VOLUME_A_GPIO, ROTARY_VOLUME_B_GPIO, ROTARY_VOLUME_SW_GPIO},
 };
 
+/**
+ * @brief Reads the state of a rotary encoder.
+ *
+ * This function reads the state of a specified rotary encoder and updates the provided
+ * boolean pointers with the current state of the encoder's A and B channels, as well as
+ * the switch state.
+ *
+ * @param rotaryNum The number of the rotary encoder to read.
+ * @param pbA Pointer to a boolean variable to store the state of the A channel.
+ * @param pbB Pointer to a boolean variable to store the state of the B channel.
+ * @param pbSw Pointer to a boolean variable to store the state of the switch.
+ */
 void ioReadRotary( int rotaryNum, bool *pbA, bool *pbB, bool *pbSw )
 {
     if( rotaryNum < NUM_ROTARIES)
@@ -1433,6 +1823,7 @@ bool ioReadRightButton()
 }
 #else
 
+// Map between button number and the input GPIO
 static uint8_t buttonMap[NUM_PUSHBUTTONS] =
 {
     PUSHBUTTON_0_GPIO,
@@ -1441,6 +1832,15 @@ static uint8_t buttonMap[NUM_PUSHBUTTONS] =
     PUSHBUTTON_3_GPIO,
 };
 
+/**
+ * @brief Reads the state of a pushbutton.
+ *
+ * This function reads the state of a specified pushbutton and returns
+ * true if the button is pressed, false otherwise.
+ *
+ * @param button The number of the pushbutton to read.
+ * @return true if the button is pressed, false otherwise.
+ */
 bool ioReadButton( uint8_t button )
 {
     if( button < NUM_PUSHBUTTONS )
@@ -1454,40 +1854,83 @@ bool ioReadButton( uint8_t button )
 }
 #endif
 
-// Read the morse dot and dash paddles
+/**
+ * @brief Reads the state of the dot paddle.
+ *
+ * This function reads the state of the dot paddle and returns
+ * true if the paddle is pressed, false otherwise.
+ *
+ * @return true if the dot paddle is pressed, false otherwise.
+ */
 bool ioReadDotPaddle()
 {
     return !gpio_get(MORSE_PADDLE_DOT_GPIO);
 }
 
+/**
+ * @brief Reads the state of the dash paddle.
+ *
+ * This function reads the state of the dash paddle and returns
+ * true if the paddle is pressed, false otherwise.
+ *
+ * @return true if the dash paddle is pressed, false otherwise.
+ */
 bool ioReadDashPaddle()
 {
     return !gpio_get(MORSE_PADDLE_DASH_GPIO);
 }
 
-// Set the morse output high or low
+/**
+ * @brief Sets the Morse output to a high state.
+ *
+ * This function configures the output pin used for Morse code signaling
+ * to a high state, indicating a signal is being transmitted.
+ */
 void ioWriteMorseOutputHigh()
 {
     gpio_put(MORSE_OUTPUT_GPIO, 1);
 }
 
+/**
+ * @brief Sets the Morse output to a low state.
+ *
+ * This function configures the output pin used for Morse code signaling
+ * to a low state, indicating no signal is being transmitted.
+ */
 void ioWriteMorseOutputLow()
 {
     gpio_put(MORSE_OUTPUT_GPIO, 0);
 }
 
-// Set the preamp enable on or off
+/**
+ * @brief Sets the preamp enable to on state.
+ *
+ * This function configures the preamp enable GPIO pin to a high state,
+ * indicating that the preamp is enabled.
+ */
 void ioWritePreampOn()
 {
     gpio_put(PREAMP_ENABLE_GPIO, 1);
 }
 
+/**
+ * @brief Sets the preamp enable to off state.
+ *
+ * This function configures the preamp enable GPIO pin to a low state,
+ * indicating that the preamp is disabled.
+ */
 void ioWritePreampOff()
 {
     gpio_put(PREAMP_ENABLE_GPIO, 0);
 }
 
-// Set RX enable high or low
+/**
+ * @brief Sets the RX enable to high state.
+ *
+ * This function configures the RX enable GPIO pin to a high state,
+ * indicating that the receiver is enabled. It also unmutes the input
+ * and sets the bMuteRX flag to false.
+ */
 void ioWriteRXEnableHigh()
 {
     gpio_put(RX_ENABLE_GPIO, 1);
@@ -1495,6 +1938,13 @@ void ioWriteRXEnableHigh()
     bMuteRX = false;
 }
 
+/**
+ * @brief Sets the RX enable to low state.
+ *
+ * This function configures the RX enable GPIO pin to a low state,
+ * indicating that the receiver is disabled. It also mutes the input
+ * and sets the bMuteRX flag to true.
+ */
 void ioWriteRXEnableLow()
 {
     bMuteRX = true;
@@ -1502,7 +1952,12 @@ void ioWriteRXEnableLow()
     gpio_put(RX_ENABLE_GPIO, 0);
 }
 
-// Switch the sidetone output on or off
+/**
+ * @brief Switches the sidetone output on.
+ *
+ * This function enables the sidetone output and ensures that the sine wave
+ * starts at a zero crossing to avoid clicks.
+ */
 void ioWriteSidetoneOn()
 {
     sidetoneOn = true;
@@ -1511,12 +1966,24 @@ void ioWriteSidetoneOn()
     currentSinePos = 0;
 }
 
+/**
+ * @brief Switches the sidetone output off.
+ *
+ * This function disables the sidetone output.
+ */
 void ioWriteSidetoneOff()
 {
     sidetoneOn = false;
 }
 
-// Switch the band relay output on or off
+/**
+ * @brief Controls the state of a band relay.
+ *
+ * This function sets the specified band relay to the desired state (on or off).
+ *
+ * @param relay The index of the relay to control.
+ * @param bOn The desired state of the relay (true for on, false for off).
+ */
 void ioWriteBandRelay( uint8_t relay, bool bOn )
 {
     if( relay < NUM_RELAYS )
@@ -1525,7 +1992,12 @@ void ioWriteBandRelay( uint8_t relay, bool bOn )
     }
 }
 
-// Configure all the I/O we need
+/**
+ * @brief Initializes the I/O configuration.
+ *
+ * This function sets up the necessary GPIO pins for input and output,
+ * initializes the CODEC, and launches the second core for DSP processing.
+ */
 void ioInit()
 {
     // Force 3V3 regulator into PWM mode to reduce noise
