@@ -96,6 +96,10 @@ static int volumeMultiplier[MAX_VOLUME + 1] =
     11435,
 };
 
+// The index into the volume multiplier table that represents
+// the unmuted volume
+static const int UNMUTED_INDEX = 19; 
+
 // Approx 700Hz sine wave
 #define NUM_SINE700 80
 static const int sine700[NUM_SINE700] =
@@ -224,9 +228,6 @@ int minValueQ, maxValueQ;
 int maxIn, maxOut, minIn, minOut;
 #endif
 
-// Maximum mute factor when unmuting
-int maxMuteFactor = DEFAULT_MAX_MUTE_FACTOR;
-
 // Select normal, binaural or peaked output
 enum eOutput outputMode;
 
@@ -348,10 +349,6 @@ int inputShift = DEFAULT_INPUT_SHIFT;
 // Main and sidetone volumes (indexes into the multiplier table)
 static uint8_t volume = DEFAULT_VOLUME;
 static uint8_t sidetoneVolume = DEFAULT_SIDETONE_VOLUME;
-
-static bool sidetoneOn;
-
-static bool bMuteRX;
 
 /**
  * @brief Delays the input sample by a specified number of samples.
@@ -1096,6 +1093,206 @@ static inline int applyAGC( int in )
 }
 
 /**
+ * @brief Applies the volume multiplier to the input sample.
+ *
+ * This function adjusts the input sample based on the specified volume level.
+ * It multiplies the sample by the volume multiplier corresponding to the given
+ * volume index and scales it by the volume precision.
+ *
+ * @param sample The input sample to which the volume is applied.
+ * @param volume The volume level index.
+ * @return The sample with the volume applied.
+ */
+static inline int applyVolume( int sample, int volume )
+{
+    if( volume <= MAX_VOLUME )
+    {
+        return sample * volumeMultiplier[volume] / VOLUME_PRECISION;
+    }
+    else
+    {
+        return sample;
+    }
+}
+
+/**
+ * @brief Enumeration for mute states.
+ *
+ * This enumeration defines the possible states for muting the audio output.
+ * The states include UNMUTED, MUTING, MUTED, and UNMUTING.
+ */
+enum eMuteState
+{
+    UNMUTED,
+    MUTING,
+    MUTED,
+    UNMUTING
+};
+
+/**
+ * @brief Mute states for the main audio and sidetone.
+ *
+ * These variables represent the current mute state for the main audio output
+ * and the sidetone. The main audio output starts unmuted, while the sidetone
+ * starts muted.
+ */
+static enum eMuteState muteState = UNMUTED;
+static enum eMuteState sidetoneState = MUTED;
+
+/**
+ * @brief Index used for muting the audio output.
+ *
+ * This variable keeps track of the current mute index, which is used to
+ * gradually mute or unmute the audio output to avoid clicks.
+ */
+static int muteIndex;
+
+/**
+ * @brief Index used for muting the sidetone.
+ *
+ * This variable keeps track of the current mute index for the sidetone,
+ * which is used to gradually mute or unmute the sidetone to avoid clicks.
+ */
+static int sidetoneIndex;
+
+/**
+ * @brief Speed at which the audio is muted or unmuted.
+ *
+ * This variable defines the speed at which the audio is gradually muted or unmuted
+ * to avoid clicks. The value is set to the default mute speed.
+ * It works backwards so the higher the value the slower the mute.
+ */
+int muteSpeed = DEFAULT_MUTE_SPEED;
+
+/**
+ * @brief Mutes the audio output.
+ *
+ * This function transitions the mute state from UNMUTED to MUTING,
+ * allowing the audio output to gradually mute. If the audio is already
+ * in the process of muting or unmuting, it will continue to mute.
+ *
+ * @param pMuteState Pointer to the current mute state.
+ * @param pMuteIndex Pointer to the current mute index.
+ */
+static inline void mute(enum eMuteState *pMuteState, int *pMuteIndex)
+{
+    switch (*pMuteState)
+    {
+        case UNMUTED:
+            *pMuteState = MUTING;
+
+            // Volume index starts at the maximum volume
+            *pMuteIndex = UNMUTED_INDEX * muteSpeed;
+            break;
+
+        case MUTING:
+            break;
+
+        case MUTED:
+            break;
+
+        case UNMUTING:
+            *pMuteState = MUTING;
+            break;
+    }
+}
+
+/**
+ * @brief Unmutes the audio output.
+ *
+ * This function transitions the mute state from MUTING or MUTED to UNMUTING,
+ * allowing the audio output to gradually return to the unmuted state.
+ *
+ * @param pMuteState Pointer to the current mute state.
+ * @param pMuteIndex Pointer to the current mute index.
+ */
+static inline void unmute(enum eMuteState *pMuteState, int *pMuteIndex)
+{
+    switch (*pMuteState)
+    {
+        case UNMUTED:
+            break;
+
+        case MUTING:
+            *pMuteState = UNMUTING;
+            break;
+
+        case MUTED:
+            *pMuteState = UNMUTING;
+            break;
+
+        case UNMUTING:
+            break;
+    }
+}
+
+/**
+ * @brief Applies mute to the input sample based on the current mute state.
+ *
+ * This function adjusts the input sample based on the current mute state.
+ * It gradually mutes or unmutes the sample to avoid clicks.
+ * Needs to be called on every output sample i.e. 8kHz.
+ *
+ * @param sample The input sample to be muted or unmuted.
+ * @param pMuteState Pointer to the current mute state.
+ * @param pMuteIndex Pointer to the current mute index.
+ * @return The muted or unmuted sample.
+ */
+static inline int applyMute(int sample, enum eMuteState *pMuteState, int *pMuteIndex)
+{
+    // We will calculate the output by applying the mute amount to the input sample
+    int out;
+
+    switch (*pMuteState)
+    {
+        case UNMUTED:
+            break;
+
+        case MUTING:
+            if (*pMuteIndex > 0)
+            {
+                // Move down the volume table
+                (*pMuteIndex)--;
+            }
+            else
+            {
+                // Now fully muted
+                *pMuteState = MUTED;
+            }
+            break;
+
+        case MUTED:
+            break;
+
+        case UNMUTING:
+            if (*pMuteIndex < UNMUTED_INDEX * muteSpeed)
+            {
+                // Move up the volume table
+                (*pMuteIndex)++;
+            }
+            else
+            {
+                // Now fully unmuted
+                *pMuteState = UNMUTED;
+            }
+            break;
+    }
+
+    // If unmuted then the input sample is untouched
+    if (*pMuteState == UNMUTED)
+    {
+        out = sample;
+    }
+    else
+    {
+        // Otherwise apply the volume for the current mute index
+        out = applyVolume(sample, *pMuteIndex / muteSpeed);
+    }
+
+    return out;
+}
+
+/**
  * @brief Processes a pair of I and Q samples to create the left and right audio outputs.
  *
  * This function takes in-phase (I) and quadrature (Q) samples, applies various signal processing
@@ -1187,90 +1384,15 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
         default:
             break;
     }
-#if 0
-    static bool bWasMuted;
 
-    // Mute the RX if required
-    static int muteFactor;
-    static bool waitingZeroCross;
-
-    // Keep track of whether the current and previous samples are
-    // positive or not - the top bit of the 32 bit integer is the sign bit
-    static int prevOut;
-    bool outPositive = (((int)out) & 0x80000000 ? false : true);
-    bool prevOutPositive = (((int)prevOut) & 0x80000000 ? false : true);
-    prevOut = out;
-
-    if( bMuteRX )
-    {
-        bWasMuted = true;
-        //out = 0;
-        muteFactor = 0;
-
-        // We will unmute on a zero crossing
-        waitingZeroCross = true;
-    }
-    else
-    {
-        // Keep waiting for a zero cross until we see a sign change
-        if( waitingZeroCross )
-        {
-            if( outPositive != prevOutPositive )
-            {
-                waitingZeroCross = false;
-            }
-        }
-
-        // If we aren't waiting for a zero cross we can
-        // proceed
-        if( !waitingZeroCross )
-        {
-            // On unmute bring the volume up slowly to avoid clicks
-            if( bWasMuted && (muteFactor < maxMuteFactor) )
-            {
-                muteFactor++;
-            }
-            else
-            {
-                bWasMuted = false;
-                muteFactor = maxMuteFactor;
-            }
-        }
-    }
-#endif
-    // Insert sidetone and set the appropriate volume
-    // When the sidetone is switched off we fade it down to
-    // reduce clicks
-    static uint8_t actualSidetoneVolume;
-    static uint8_t fadeRate;
-    static uint8_t fadeCount;
-    if( sidetoneOn )
-    {
-        actualSidetoneVolume = sidetoneVolume;
-        fadeRate = MAX_VOLUME / sidetoneVolume + 2;
-        fadeCount = 0;
-    }
-    else
-    {
-        //actualSidetoneVolume = 0;
-        // Lower sidetone volumes fade down too quickly so
-        // we slow them down
-        fadeCount++;
-        if( (fadeCount % fadeRate) == 0 )
-        {
-            if( actualSidetoneVolume > 0 )
-            {
-                actualSidetoneVolume--;
-            }
-        }
-    }
-    //out = ((int)out * muteFactor) / maxMuteFactor;
+    // Apply any mute
+    out = applyMute(out, &muteState, &muteIndex);
 
     // Apply AGC
     out = applyAGC( out );
 
     // Apply the volume
-    out = (out*volumeMultiplier[volume])/VOLUME_PRECISION;
+    out = applyVolume(out, volume);
 
     // Select binaural, peaked or normal output
     switch( outputMode )
@@ -1290,13 +1412,21 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
             break;
     }
 
-    if( actualSidetoneVolume > 0 )
+    // Apply sidetone if required.
+    if( sidetoneState != MUTED )
     {
-        int sidetone = (sinewave()*volumeMultiplier[actualSidetoneVolume])/VOLUME_PRECISION;
+        // Get the sine wave at the correct volume
+        int sidetone = applyVolume(sinewave(), sidetoneVolume);
+
+        // Apply gradual mute to sidetone so it fades up or down to avoid clicks
+        sidetone = applyMute(sidetone, &sidetoneState, &sidetoneIndex);
+
+        // Apply the sidetone to the left and right channels
         *outLeft += sidetone;
         *outRight += sidetone;
     }
 
+    // Check for overload
     if( *outLeft < ADC_OVERLOAD_LOW || *outLeft > ADC_OVERLOAD_HIGH || *outRight < ADC_OVERLOAD_LOW || *outRight > ADC_OVERLOAD_HIGH )
     {
         outOverload = true;
@@ -1928,27 +2058,23 @@ void ioWritePreampOff()
  * @brief Sets the RX enable to high state.
  *
  * This function configures the RX enable GPIO pin to a high state,
- * indicating that the receiver is enabled. It also unmutes the input
- * and sets the bMuteRX flag to false.
+ * indicating that the receiver is enabled. It also unmutes.
  */
 void ioWriteRXEnableHigh()
 {
     gpio_put(RX_ENABLE_GPIO, 1);
-    WM8960UnmuteInput();
-    bMuteRX = false;
+    unmute( &muteState, &muteIndex );
 }
 
 /**
  * @brief Sets the RX enable to low state.
  *
  * This function configures the RX enable GPIO pin to a low state,
- * indicating that the receiver is disabled. It also mutes the input
- * and sets the bMuteRX flag to true.
+ * indicating that the receiver is disabled. It also mutes.
  */
 void ioWriteRXEnableLow()
 {
-    bMuteRX = true;
-    WM8960MuteInput();
+    mute( &muteState, &muteIndex );
     gpio_put(RX_ENABLE_GPIO, 0);
 }
 
@@ -1960,7 +2086,8 @@ void ioWriteRXEnableLow()
  */
 void ioWriteSidetoneOn()
 {
-    sidetoneOn = true;
+    // Unmute the sidetone gradually to avoid clicks
+    unmute( &sidetoneState, &sidetoneIndex );
 
     // Always start the sine wave at zero crossing
     currentSinePos = 0;
@@ -1973,7 +2100,8 @@ void ioWriteSidetoneOn()
  */
 void ioWriteSidetoneOff()
 {
-    sidetoneOn = false;
+    // Mute the sidetone gradually to avoid clicks
+    mute( &sidetoneState, &sidetoneIndex );
 }
 
 /**
