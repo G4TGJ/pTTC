@@ -172,7 +172,7 @@
 
 // Minimum and maximum volume levels
 #define MIN_VOLUME 0
-#define MAX_VOLUME 40
+#define MAX_VOLUME 63
 #define DEFAULT_VOLUME 20
 #define DEFAULT_SIDETONE_VOLUME 8
 #define MIN_SIDETONE_VOLUME MIN_VOLUME
@@ -327,8 +327,8 @@
 #define INTERMEDIATE_FREQUENCY  12000
 #define BFO_SAMPLE_RATE          8000
 
-#define DEFAULT_MUTE_SPEED  2
-#define MAX_MUTE_SPEED      9
+#define DEFAULT_MUTE_SPEED  4
+#define MAX_MUTE_SPEED     99
 #define MIN_MUTE_SPEED      1
 
 // Shift the input for some gain

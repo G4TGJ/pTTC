@@ -63,28 +63,51 @@ static int volumeMultiplier[MAX_VOLUME + 1] =
     14,
     18,
     23,
+    26,
     29,
+    32,
     36,
+    41,
     46,
+    51,
     57,
+    64,
     72,
+    81,
     91,
+    102,
     114,
+    128,
     144,
+    162,
     181,
+    203,
     228,
+    256,
     287,
+    322,
     362,
+    406,
     455,
+    511,
     573,
+    643,
     722,
+    810,
     908,
+    1019,
     1144,
+    1283,
     1440,
+    1615,
     1812,
+    2033,
     2282,
+    2560,
     2872,
+    3223,
     3616,
+    4057,
     4552,
     5108,
     5731,
@@ -93,97 +116,93 @@ static int volumeMultiplier[MAX_VOLUME + 1] =
     8095,
     9083,
     10192,
-    11435,
+    11435
 };
-
-// The index into the volume multiplier table that represents
-// the unmuted volume
-static const int UNMUTED_INDEX = 19; 
 
 // Approx 700Hz sine wave
 #define NUM_SINE700 80
 static const int sine700[NUM_SINE700] =
 {
-0,
-535,
-912,
-1021,
-828,
-392,
--160,
--665,
--974,
--996,
--724,
--239,
-316,
-779,
-1011,
-946,
-602,
-80,
--465,
--873,
--1024,
--873,
--465,
-80,
-602,
-946,
-1011,
-779,
-316,
--239,
--724,
--996,
--974,
--665,
--160,
-392,
-828,
-1021,
-912,
-535,
-0,
--535,
--912,
--1021,
--828,
--392,
-160,
-665,
-974,
-996,
-724,
-239,
--316,
--779,
--1011,
--946,
--602,
--80,
-465,
-873,
-1024,
-873,
-465,
--80,
--602,
--946,
--1011,
--779,
--316,
-239,
-724,
-996,
-974,
-665,
-160,
--392,
--828,
--1021,
--912,
--535,
+    0,
+    535,
+    912,
+    1021,
+    828,
+    392,
+    -160,
+    -665,
+    -974,
+    -996,
+    -724,
+    -239,
+    316,
+    779,
+    1011,
+    946,
+    602,
+    80,
+    -465,
+    -873,
+    -1024,
+    -873,
+    -465,
+    80,
+    602,
+    946,
+    1011,
+    779,
+    316,
+    -239,
+    -724,
+    -996,
+    -974,
+    -665,
+    -160,
+    392,
+    828,
+    1021,
+    912,
+    535,
+    0,
+    -535,
+    -912,
+    -1021,
+    -828,
+    -392,
+    160,
+    665,
+    974,
+    996,
+    724,
+    239,
+    -316,
+    -779,
+    -1011,
+    -946,
+    -602,
+    -80,
+    465,
+    873,
+    1024,
+    873,
+    465,
+    -80,
+    -602,
+    -946,
+    -1011,
+    -779,
+    -316,
+    239,
+    724,
+    996,
+    974,
+    665,
+    160,
+    -392,
+    -828,
+    -1021,
+    -912,
+    -535,
 };
 
 static const i2s_config i2sConfig = {CODEC_SAMPLE_RATE,     // Sample rate
@@ -1136,8 +1155,8 @@ enum eMuteState
  * and the sidetone. The main audio output starts unmuted, while the sidetone
  * starts muted.
  */
-static enum eMuteState muteState = UNMUTED;
-static enum eMuteState sidetoneState = MUTED;
+static volatile enum eMuteState muteState = UNMUTED;
+static volatile enum eMuteState sidetoneState = MUTED;
 
 /**
  * @brief Index used for muting the audio output.
@@ -1145,7 +1164,7 @@ static enum eMuteState sidetoneState = MUTED;
  * This variable keeps track of the current mute index, which is used to
  * gradually mute or unmute the audio output to avoid clicks.
  */
-static int muteIndex;
+static volatile int muteIndex = DEFAULT_VOLUME;
 
 /**
  * @brief Index used for muting the sidetone.
@@ -1153,7 +1172,7 @@ static int muteIndex;
  * This variable keeps track of the current mute index for the sidetone,
  * which is used to gradually mute or unmute the sidetone to avoid clicks.
  */
-static int sidetoneIndex;
+static volatile int sidetoneIndex;
 
 /**
  * @brief Speed at which the audio is muted or unmuted.
@@ -1165,6 +1184,15 @@ static int sidetoneIndex;
 int muteSpeed = DEFAULT_MUTE_SPEED;
 
 /**
+ * @brief Delay counter for mute operation.
+ *
+ * This counter is used to control the speed of unmuting
+ * the main audio output. It helps in gradually changing
+ * the volume to avoid clicks.
+ */
+static int muteDelayCounter;
+
+/**
  * @brief Mutes the audio output.
  *
  * This function transitions the mute state from UNMUTED to MUTING,
@@ -1173,16 +1201,17 @@ int muteSpeed = DEFAULT_MUTE_SPEED;
  *
  * @param pMuteState Pointer to the current mute state.
  * @param pMuteIndex Pointer to the current mute index.
+ * @param volume The unmuted volume level.
  */
-static inline void mute(enum eMuteState *pMuteState, int *pMuteIndex)
+static inline void mute(volatile enum eMuteState *pMuteState, volatile int *pMuteIndex, int volume)
 {
     switch (*pMuteState)
     {
         case UNMUTED:
             *pMuteState = MUTING;
 
-            // Volume index starts at the maximum volume
-            *pMuteIndex = UNMUTED_INDEX * muteSpeed;
+            // Volume index starts at the unmuted volume
+            *pMuteIndex = volume;
             break;
 
         case MUTING:
@@ -1205,8 +1234,9 @@ static inline void mute(enum eMuteState *pMuteState, int *pMuteIndex)
  *
  * @param pMuteState Pointer to the current mute state.
  * @param pMuteIndex Pointer to the current mute index.
+ * @param volume The unmuted volume level.
  */
-static inline void unmute(enum eMuteState *pMuteState, int *pMuteIndex)
+static inline void unmute(volatile enum eMuteState *pMuteState, volatile int *pMuteIndex, int volume)
 {
     switch (*pMuteState)
     {
@@ -1236,12 +1266,14 @@ static inline void unmute(enum eMuteState *pMuteState, int *pMuteIndex)
  * @param sample The input sample to be muted or unmuted.
  * @param pMuteState Pointer to the current mute state.
  * @param pMuteIndex Pointer to the current mute index.
+ * @param volume The unmuted volume level.
+ * @param delay Pointer to the unmute delay counter. If null then no delay is applied.
  * @return The muted or unmuted sample.
  */
-static inline int applyMute(int sample, enum eMuteState *pMuteState, int *pMuteIndex)
+static inline int applyMute(int sample, volatile enum eMuteState *pMuteState, volatile int *pMuteIndex, int volume, int *pDelay)
 {
-    // We will calculate the output by applying the mute amount to the input sample
-    int out;
+    // The actual volume we will apply
+    int vol;
 
     switch (*pMuteState)
     {
@@ -1265,10 +1297,26 @@ static inline int applyMute(int sample, enum eMuteState *pMuteState, int *pMuteI
             break;
 
         case UNMUTING:
-            if (*pMuteIndex < UNMUTED_INDEX * muteSpeed)
+            if (*pMuteIndex < volume)
             {
-                // Move up the volume table
-                (*pMuteIndex)++;
+                // Only use the delay if non null
+                if( pDelay )
+                {
+                    // We unmute more slowly to avoid clicks
+                    (*pDelay)++;
+                    if( *pDelay >= muteSpeed )
+                    {
+                        *pDelay = 0;
+
+                        // Move up the volume table
+                        (*pMuteIndex)++;
+                    }
+                }
+                else
+                {
+                    // Move up the volume table
+                    (*pMuteIndex)++;
+                }
             }
             else
             {
@@ -1281,15 +1329,15 @@ static inline int applyMute(int sample, enum eMuteState *pMuteState, int *pMuteI
     // If unmuted then the input sample is untouched
     if (*pMuteState == UNMUTED)
     {
-        out = sample;
+        vol = volume;
     }
     else
     {
         // Otherwise apply the volume for the current mute index
-        out = applyVolume(sample, *pMuteIndex / muteSpeed);
+        vol = *pMuteIndex;
     }
 
-    return out;
+    return applyVolume(sample, vol);
 }
 
 /**
@@ -1385,14 +1433,11 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
             break;
     }
 
-    // Apply any mute
-    out = applyMute(out, &muteState, &muteIndex);
-
     // Apply AGC
     out = applyAGC( out );
 
-    // Apply the volume
-    out = applyVolume(out, volume);
+    // Apply any mute
+    out = applyMute(out, &muteState, &muteIndex, volume, &muteDelayCounter);
 
     // Select binaural, peaked or normal output
     switch( outputMode )
@@ -1415,11 +1460,8 @@ static inline void processIQ( int inI, int inQ, int *outLeft, int *outRight )
     // Apply sidetone if required.
     if( sidetoneState != MUTED )
     {
-        // Get the sine wave at the correct volume
-        int sidetone = applyVolume(sinewave(), sidetoneVolume);
-
-        // Apply gradual mute to sidetone so it fades up or down to avoid clicks
-        sidetone = applyMute(sidetone, &sidetoneState, &sidetoneIndex);
+        // Apply the side wave and apply gradual mute/unmute to sidetone so it fades up or down to avoid clicks
+        int sidetone = applyMute(sinewave(), &sidetoneState, &sidetoneIndex, sidetoneVolume, NULL);
 
         // Apply the sidetone to the left and right channels
         *outLeft += sidetone;
@@ -2063,7 +2105,7 @@ void ioWritePreampOff()
 void ioWriteRXEnableHigh()
 {
     gpio_put(RX_ENABLE_GPIO, 1);
-    unmute( &muteState, &muteIndex );
+    unmute( &muteState, &muteIndex, volume );
 }
 
 /**
@@ -2074,7 +2116,7 @@ void ioWriteRXEnableHigh()
  */
 void ioWriteRXEnableLow()
 {
-    mute( &muteState, &muteIndex );
+    mute( &muteState, &muteIndex, volume );
     gpio_put(RX_ENABLE_GPIO, 0);
 }
 
@@ -2087,7 +2129,7 @@ void ioWriteRXEnableLow()
 void ioWriteSidetoneOn()
 {
     // Unmute the sidetone gradually to avoid clicks
-    unmute( &sidetoneState, &sidetoneIndex );
+    unmute( &sidetoneState, &sidetoneIndex, sidetoneVolume );
 
     // Always start the sine wave at zero crossing
     currentSinePos = 0;
@@ -2101,7 +2143,7 @@ void ioWriteSidetoneOn()
 void ioWriteSidetoneOff()
 {
     // Mute the sidetone gradually to avoid clicks
-    mute( &sidetoneState, &sidetoneIndex );
+    mute( &sidetoneState, &sidetoneIndex, sidetoneVolume );
 }
 
 /**
