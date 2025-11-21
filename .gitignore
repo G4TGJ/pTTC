@@ -1,5 +1,7 @@
 .idea
-.vscode
+.vscode/*
+|.vscode
+!.vscode/c_cpp_properties.json
 _deps
 cmake-*
 build
