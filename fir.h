@@ -557,6 +557,7 @@ static int decimate1608FilterTaps[DECIMATE_16_08_FILTER_TAP_NUM] =
 
 #else
 
+#if 0
 /*
 sampling frequency: 16000 Hz
 
@@ -574,7 +575,6 @@ fixed point precision: 16 bits
 
 */
 
-#define DECIMATE_FACTOR_16_8 2
 #define DECIMATE_16_08_FILTER_TAP_NUM 39
 #define DECIMATE_16_08_FILTER_PRECISION 15
 
@@ -620,6 +620,7 @@ static int decimate1608FilterTaps[DECIMATE_16_08_FILTER_TAP_NUM] =
   -4,
   124
 };
+#endif
 #endif
 #else
 
@@ -2907,16 +2908,15 @@ const struct sFir
   const int         numTaps;
   const bool        binaural;
   const char* const text;
-  const char* const shortText;
 }
 filters[NUM_FILTERS]=
 {
-  { NULL,              0,                       false,  "Off",    " " },
+  { NULL,              0,                       false, "Off" },
 #if 1
-  { cwFilterTaps200,   CW_FILTER_TAP_NUM_200,   false,  "200Hz",  "2" },
-  { cwFilterTaps400,   CW_FILTER_TAP_NUM_400,   false,  "400Hz",  "4" },
-  { cwFilterTaps800,   CW_FILTER_TAP_NUM_800,   false,  "800Hz",  "8" },
-  { cwFilterTaps1000,  CW_FILTER_TAP_NUM_1000,  false,  "1000Hz", "10" },
+  { cwFilterTaps200,   CW_FILTER_TAP_NUM_200,   false,  "200Hz" },
+  { cwFilterTaps400,   CW_FILTER_TAP_NUM_400,   false,  "400Hz" },
+  { cwFilterTaps800,   CW_FILTER_TAP_NUM_800,   false,  "800Hz" },
+  { cwFilterTaps1000,  CW_FILTER_TAP_NUM_1000,  false,  "1000Hz" },
 #else
   { cwFilterTaps1,     CW_FILTER_TAP_NUM_1,     CW_FILTER_PRECISION_1,     true,  "Binaural" },
   { cwFilterTaps2,     CW_FILTER_TAP_NUM_2,     CW_FILTER_PRECISION_2,     false, "500Hz" },

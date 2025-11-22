@@ -7,6 +7,9 @@
 
 #define ULONG_MAX 0xFFFFFFFF
 
+// We are building the pico SDR transceiver
+#define PSDR
+
 // Address of the LCD display
 #define LCD_I2C_ADDRESS 0x27
 
@@ -77,19 +80,10 @@
 // Transmit and receive clocks. Direct conversion receive uses 2 clocks (0 and 1) for quadrature.
 // Superhet uses one clock for the BFO. In this case use clocks 0 and 2 so that BFO can be set
 // accurately. TX uses the third clock, the one not used for RX.
-// PSDR2 mixes superhet and direct conversion. Clocks 0 and 1 are in quadrature for the BFO
-// and clock 2 is used for the LO and TX.
 #define NUM_CLOCKS 3
-#ifdef PSDR2
-#define BFO_CLOCK_A 0
-#define BFO_CLOCK_B 1
-#define LO_CLOCK   2
-#define TX_CLOCK   2
-#else
 #define RX_CLOCK_A 0
 #define RX_CLOCK_B (intermediateFrequency == 0 ? 1 : 2)
 #define TX_CLOCK   (intermediateFrequency == 0 ? 2 : 1)
-#endif
 
 // The minimum and maximum crystal frequencies in the setting menu
 // Have to allow for adjusting above or below actual valid crystal range
@@ -239,6 +233,31 @@
 // EEPROM_PAGE_SIZE and must also be smaller than EEPROM_DEVICE_PAGE_SIZE
 #define EEPROM_SIZE 32
 
+// The display we are using
+#define OLED_DISPLAY
+//#define LCD_DISPLAY
+
+#ifdef OLED_DISPLAY
+
+#define OLED_HEIGHT  64
+#define OLED_WIDTH  128
+
+#define FREQUENCY_FONT fontGrotesk16x32
+#define HALF_FREQUENCY_FONT fontArialBold
+#define SMALL_FONT fontSinclairS
+
+#define WPM_FONT SMALL_FONT
+#define VOLUME_FONT SMALL_FONT
+#define PREAMP_FONT SMALL_FONT
+
+#define FREQUENCY_DOT_FONT SMALL_FONT
+#define VFO_LETTER_FONT SMALL_FONT
+#define MENU_FONT SMALL_FONT
+#define FILTER_FONT SMALL_FONT
+#define MODE_FONT SMALL_FONT
+
+#endif
+
 // Number of buttons (in addition to those on rotary controls)
 #define NUM_PUSHBUTTONS 4
 
@@ -247,95 +266,12 @@
 #define BUTTON_A        2
 #define BUTTON_B        3
 
-// Select whether to use I2S or ADC/PWM for audio input and output
-// Should be possible to use I2S for input and PWM for output but
-// currently it's one or the other.
-
-// Mk 2 uses ADC and PWM, has LCD display
-// Mk 1 uses I2S input and output, has OLED display
-#ifdef PSDR2
-
-#define LCD_DISPLAY
-
-#define USE_ADC_INPUT
-#define USE_PWM_OUTPUT
-
-#define NUM_ADC 2
-
-// ADC clock is 48MHz. 
-#define ADC_CLOCK 48000000
-
-// Ultimate sample rate is 8K but we are overclocking and
-// then decimating.
-// ADC runs at 128kHz and we interpolate to 256kHz
-#define CODEC_SAMPLE_RATE 128000
-#define INPUT_INTERPOLATE_FACTOR 2
-
-#define ADC_CLOCK_DIVIDER (ADC_CLOCK/CODEC_SAMPLE_RATE/NUM_ADC - 1)
-
-#define AUDIO_I_ADC    0
-#define AUDIO_Q_ADC    1
-
-#define AUDIO_DIVIDE 1
-
-#define AUDIO_WRAP 4094
-
-// Input buffers are at 256ksps
-#define iInputBuffer iBuffer256k
-#define qInputBuffer qBuffer256k
-
-#else
-#define OLED_DISPLAY
-
-#define I2S_OUTPUT
-#define I2S_INPUT
-#define USE_WM8960
-
-#define CODEC_SAMPLE_RATE 48000
-
-#if 0
-// Can interpolate from 48ksps to 96ksps
-#define INPUT_INTERPOLATE_FACTOR 2
-
-// Input buffers are at 96ksps
-#define iInputBuffer iBuffer96k
-#define qInputBuffer qBuffer96k
-
-#else
-#define INPUT_INTERPOLATE_FACTOR 1
-
-// Input buffers are at 48ksps
-#define iInputBuffer iBuffer48k
-#define qInputBuffer qBuffer48k
-
-#endif
-#endif
-
-#define INTERMEDIATE_FREQUENCY  12000
-#define BFO_SAMPLE_RATE          8000
-
-// The actual input sample rate after any interpolation
-#define INPUT_SAMPLE_RATE (CODEC_SAMPLE_RATE * INPUT_INTERPOLATE_FACTOR)
-
-// If the IF is a quarter of the sample rate we can use
-// a very simple mixer
-#define IF_IS_QUARTER_SAMPLE_RATE ((4 * INTERMEDIATE_FREQUENCY) == INPUT_SAMPLE_RATE)
-
 // Definitions of GPIOs in order for easy reference
 
-#ifdef I2S_OUTPUT
 #define I2S_DOUT_GPIO           0
 #define I2S_DIN_GPIO            1
 #define I2S_BCLK_GPIO           2
 #define I2S_LRCLK_GPIO          3  // Must be next after BCLK
-#endif
-
-#ifdef USE_PWM_OUTPUT
-#define AUDIO_PWM_L_GPIO        0
-#define PUSHBUTTON_2_GPIO       1
-#define AUDIO_PWM_R_GPIO        2
-#define PUSHBUTTON_3_GPIO       3
-#endif
 
 // I2C SDA                      4
 // I2C SCL                      5
@@ -368,15 +304,8 @@
 // Pico VBUS monitor           24
 // Pico LED                    25
 
-#ifdef USE_ADC_INPUT
-#define AUDIO_I_GPIO           26
-#define AUDIO_Q_GPIO           27
-#endif
-
-#ifdef I2S_OUTPUT
 #define PUSHBUTTON_2_GPIO      26
 #define PUSHBUTTON_3_GPIO      27
-#endif
 
 #define PREAMP_ENABLE_GPIO     28
 
@@ -386,10 +315,17 @@
 // They are otherwise used for buttons so they will
 // not be available if debug pins are enabled
 //#define ADC_DEBUG1_OUTPUT_GPIO  19
-#define ADC_DEBUG2_OUTPUT_GPIO  25
+//#define ADC_DEBUG2_OUTPUT_GPIO  25
+
+// Ultimate sample rate is 8K but we are overclocking and
+// then decimating.
+#define CODEC_SAMPLE_RATE 48000
 
 #define DEFAULT_FILTER 2
 #define DEFAULT_HILBERT_FILTER 3
+
+#define INTERMEDIATE_FREQUENCY  12000
+#define BFO_SAMPLE_RATE          8000
 
 #define DEFAULT_MUTE_SPEED  4
 #define MAX_MUTE_SPEED     99
@@ -403,7 +339,6 @@
 // How many samples we store to calculate the amplitude for AGC
 #define AGC_BUFFER_LEN 256
 
-#ifdef USE_WM8960
 // Default ADC volume settings
 #define DEFAULT_LEFT_ADC_VOLUME 0xC3
 #define DEFAULT_RIGHT_ADC_VOLUME 0xC3
@@ -415,31 +350,9 @@
 #define MIN_INPUT_BOOST_GAIN 0
 #define MAX_INPUT_BOOST_GAIN 7
 #define DEFAULT_INPUT_BOOST_GAIN 7
-#endif
+
+//#define INTERPOLATE_96K
 
 // The I and Q channels from the codec may not be exactly in sync
 // so add a delay to the I channel
 #define DEFAULT_IQ_PHASING 1
-
-#ifdef OLED_DISPLAY
-
-#define OLED_HEIGHT  64
-#define OLED_WIDTH  128
-
-#define FREQUENCY_FONT fontGrotesk16x32
-#define HALF_FREQUENCY_FONT fontArialBold
-#define SMALL_FONT fontSinclairS
-
-#define WPM_FONT SMALL_FONT
-#define VOLUME_FONT SMALL_FONT
-#define PREAMP_FONT SMALL_FONT
-
-#define FREQUENCY_DOT_FONT SMALL_FONT
-#define VFO_LETTER_FONT SMALL_FONT
-#define MENU_FONT SMALL_FONT
-#define FILTER_FONT SMALL_FONT
-#define MODE_FONT SMALL_FONT
-
-#endif
-
-#define DISPLAY_MIN_MAX

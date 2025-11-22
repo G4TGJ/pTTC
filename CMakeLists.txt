@@ -4,9 +4,9 @@ if(WIN32)
 else()
     set(USERHOME $ENV{HOME})
 endif()
-set(sdkVersion 2.2.0)
-set(toolchainVersion 14_2_Rel1)
-set(picotoolVersion 2.2.0-a4)
+set(sdkVersion 2.1.0)
+set(toolchainVersion 13_3_Rel1)
+set(picotoolVersion 2.1.0)
 set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
     include(${picoVscode})
@@ -23,17 +23,20 @@ set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
 add_compile_options( -O1 )
-add_compile_definitions( PSDR )
+
+add_executable(pTTC
+    io.c
+)
+pico_enable_stdio_usb(pTTC 1)
+pico_enable_stdio_uart(pTTC 0)
+pico_add_extra_outputs(pTTC)
+pico_set_binary_type(pTTC copy_to_ram)
 
 add_subdirectory(TTC)
 add_subdirectory(TRL)
 add_subdirectory(pTRL)
 
-set(SRCS
-    io.c
-)
-
-set(LIBS
+target_link_libraries(pTTC
     pico_stdlib
     pico_multicore
     hardware_dma
@@ -44,20 +47,3 @@ set(LIBS
     pTRL
     TRL_lcd_i2c
 )
-
-function(configTarget project)
-    add_executable(${project} ${SRCS} )
-    target_link_libraries(${project} ${LIBS})
-
-    pico_enable_stdio_usb(${project} 1)
-    pico_enable_stdio_uart(${project} 0)
-    pico_add_extra_outputs(${project})
-    pico_set_binary_type(${project} copy_to_ram)
-
-endfunction()
-
-configTarget(PSDR)
-
-configTarget(PSDR2)
-target_compile_definitions(PSDR2 PRIVATE PSDR2)
-target_compile_definitions(PSDR2 PRIVATE SYS_CLK_MHZ=200)
